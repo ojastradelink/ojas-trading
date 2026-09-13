@@ -27,5 +27,9 @@ WORKDIR /app/apps/web
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build /app/apps/web/public ./apps/web/public
+# Next's standalone server binds process.env.HOSTNAME, which container runtimes set to
+# the container id — that is not reachable from the platform proxy. Force all interfaces.
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3000
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]
