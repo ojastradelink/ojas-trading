@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { AppSidebar } from '@/components/app-sidebar';
+import { useCallback, useEffect, useState } from 'react';
+import { AppSidebar, MobileSidebar } from '@/components/app-sidebar';
 import { AppTopbar } from '@/components/app-topbar';
 import { apiGet } from '@/lib/api';
 import { useAuth, type AuthUser } from '@/lib/auth-store';
@@ -15,6 +15,8 @@ export default function AppLayout({
   const router = useRouter();
   const { accessToken, user, clear, setSession, refreshToken, hasHydrated } = useAuth();
   const [ready, setReady] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
 
   useEffect(() => {
     if (!hasHydrated) return; // wait until the persisted session is loaded
@@ -54,9 +56,10 @@ export default function AppLayout({
   return (
     <div className="flex h-screen overflow-hidden">
       <AppSidebar />
+      <MobileSidebar open={menuOpen} onClose={closeMenu} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <AppTopbar />
-        <main className="flex-1 overflow-y-auto bg-muted/20 p-6">
+        <AppTopbar menuOpen={menuOpen} onMenuClick={() => setMenuOpen(true)} />
+        <main className="flex-1 overflow-y-auto bg-muted/20 p-4 md:p-6">
           {children}
         </main>
       </div>
