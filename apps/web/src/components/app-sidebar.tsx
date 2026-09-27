@@ -3,7 +3,6 @@
 import {
   Anchor,
   ArrowLeftRight,
-  Database,
   Handshake,
   LayoutDashboard,
   Package,
@@ -43,13 +42,11 @@ const NAV: { section: string; items: NavItem[] }[] = [
     items: [
       { label: 'Parties', href: '/master/parties', icon: Users },
       { label: 'Products', href: '/master/products', icon: Package },
-      { label: 'All Master Data', href: '/master', icon: Database },
     ],
   },
   {
     section: 'Configuration',
     items: [
-      { label: 'Users & Roles', href: '/users', icon: Users },
       { label: 'Settings', href: '/settings', icon: Settings },
     ],
   },
