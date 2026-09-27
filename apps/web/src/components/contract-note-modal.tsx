@@ -160,12 +160,10 @@ export function ContractNoteModal({
   open,
   onClose,
   deal,
-  dealType,
 }: {
   open: boolean;
   onClose: () => void;
   deal: any | null;
-  dealType: string;
 }) {
   const companyQ = useQuery({
     queryKey: ['settings', 'company'],
@@ -180,25 +178,19 @@ export function ContractNoteModal({
     const firmPhone = c?.phone ? `Phone : ${c.phone}` : '';
 
     const d = deal ?? {};
-    // Both direct tabs render DirectDeal rows; degum deals are a different shape.
-    const isDirect = dealType === 'direct-deals' || dealType === 'brokerage-deals';
-    const isBroker = isDirect && d.kind === 'BROKERAGE';
-    // PRINCIPAL: BUY = Self buys from Main → Supplier is Main, Buyer is Self; SELL = reverse.
-    // BROKERAGE: no self firm — Supplier is the Seller party, Buyer is the Buyer party.
-    const sellSide = isDirect && d.side === 'SELL';
-    const supplier = isBroker ? d.sellerParty : sellSide ? d.selfParty : d.mainParty;
-    const buyer = isBroker ? d.buyerParty : sellSide ? d.mainParty : d.selfParty;
-    const rate = isDirect ? d.rate : (d.sellRate ?? d.buyRate);
-    const brokerageNote = isBroker
-      ? `Buyer Rs. ${formatNumber(Number(d.buyerBrokerageRate ?? 0), 0)}/- PMT · Seller Rs. ${formatNumber(Number(d.sellerBrokerageRate ?? 0), 0)}/- PMT (plus applicable GST)`
-      : '';
+    // Every deal is Seller → Buyer: the seller is the contract's Supplier.
+    const supplier = d.sellerParty;
+    const buyer = d.buyerParty;
+    const rs = (v: any) => `Rs. ${formatNumber(Number(v ?? 0), 0)}/-`;
+    const brokerageNote = `Buyer ${rs(d.buyerBrokerage)} PMT · Seller ${rs(d.sellerBrokerage)} PMT (plus applicable GST)`;
+    const deposit = d.deposit != null && Number(d.deposit) > 0 ? `Deposit ${rs(d.deposit)}` : '';
 
     return {
       firmName,
       firmAddress,
       firmPhone,
       contractNo: d.dealNo ?? '',
-      date: dmy(d.date ?? d.dealDate),
+      date: dmy(d.date),
       supplierName: supplier?.name ?? '',
       supplierCity: supplier?.city ?? '',
       supplierState: '',
@@ -210,16 +202,16 @@ export function ContractNoteModal({
       itemName: d.product?.name ?? d.product?.code ?? '',
       qty: '',
       weight: d.quantity != null ? formatNumber(Number(d.quantity), 2) : '',
-      rate: rate != null ? formatNumber(Number(rate), 2) : '',
-      paymentCondition: '',
-      goodsCondition: d.shipmentMonth ?? '',
-      deliveryCondition: '',
-      deliverAt: '',
+      rate: d.rate != null ? formatNumber(Number(d.rate), 2) : '',
+      paymentCondition: d.paymentCondition ?? '',
+      goodsCondition: d.shipmentMonth ? `${d.shipmentMonth} Shipment` : '',
+      deliveryCondition: d.liftingDate ? `Lifting by ${dmy(d.liftingDate)}` : '',
+      deliverAt: d.port ?? '',
       bardanaCondition: '',
       brokerageNote,
-      remarks: '',
+      remarks: deposit,
     };
-  }, [deal, dealType, companyQ.data]);
+  }, [deal, companyQ.data]);
 
   const [data, setData] = useState<ContractData>(initial);
   useEffect(() => setData(initial), [initial]);
@@ -253,7 +245,7 @@ export function ContractNoteModal({
           {/* Editable fields */}
           <div className="space-y-4 overflow-y-auto border-r border-border p-5">
             <p className="text-xs text-muted-foreground">
-              Party, item, qty &amp; rate are pulled from the deal. Fill the conditions below, then download.
+              Parties, item, qty, rate and the deal&apos;s port, payment, lifting date, shipment &amp; deposit are pre-filled. Adjust anything below, then download.
             </p>
 
             <div className="grid grid-cols-2 gap-3">
@@ -289,7 +281,7 @@ export function ContractNoteModal({
             </div>
 
             <div className="rounded-md border border-dashed border-border p-3">
-              <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Other Details (fill before download)</p>
+              <p className="mb-2 text-xs font-semibold uppercase text-muted-foreground">Other Details</p>
               <div className="grid grid-cols-1 gap-3">
                 {field('Payment Condition', 'paymentCondition', 'e.g. Advance')}
                 {field('Goods Condition', 'goodsCondition', 'e.g. July Shipment')}

@@ -1,12 +1,11 @@
 'use client';
 
 import {
-  Anchor,
-  ArrowLeftRight,
   Handshake,
   LayoutDashboard,
   Package,
   Settings,
+  Ship,
   TrendingUp,
   Users,
   X,
@@ -30,14 +29,10 @@ const NAV: { section: string; items: NavItem[] }[] = [
   },
   {
     section: 'Trading',
-    items: [{ label: 'Trading Desk', href: '/trading', icon: TrendingUp }],
-  },
-  {
-    section: 'Deals',
     items: [
-      { label: 'Direct Deals', href: '/deals/direct-deals', icon: Handshake },
-      { label: 'Brokerage Deals', href: '/deals/brokerage-deals', icon: ArrowLeftRight },
-      { label: 'Degum Deals', href: '/deals/degum-deals', icon: Anchor },
+      { label: 'Deals', href: '/deals', icon: Handshake },
+      { label: 'Degum', href: '/degum', icon: Ship },
+      { label: 'Trading Desk', href: '/trading', icon: TrendingUp },
     ],
   },
   {

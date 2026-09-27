@@ -16,8 +16,7 @@ export interface Ctx {
 
 // Document-numbering keys the platform uses (with sensible defaults).
 const SEQUENCE_KEYS: { key: string; label: string; prefix: string }[] = [
-  { key: 'DIRECT', label: 'Direct Deals', prefix: 'DD' },
-  { key: 'DEGUM', label: 'Degum Deals', prefix: 'DG' },
+  { key: 'DEAL', label: 'Deals', prefix: 'DL' },
 ];
 
 // Generic JSON setting sections + their default shape.

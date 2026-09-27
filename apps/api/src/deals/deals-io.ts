@@ -1,12 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  Deals import / export — single source of truth for columns.
 //  Each column knows how to render itself for EXPORT and (optionally) how to be
-//  parsed back on IMPORT. Computed columns (value, mtm, totals) have no `imp`
-//  descriptor, so they are ignored on import and recomputed by the service.
+//  parsed back on IMPORT. Computed columns (brokerage total, due date) have no
+//  `imp` descriptor, so they are ignored on import and recomputed by the service.
 // ═══════════════════════════════════════════════════════════════════════════
 import * as XLSX from 'xlsx';
+import { DUE_DAY_OPTIONS } from './dto/deals.dto';
 
-export type ImportKind = 'string' | 'number' | 'date' | 'enum' | 'bool' | 'party' | 'self' | 'product';
+export type ImportKind = 'string' | 'number' | 'date' | 'enum' | 'bool' | 'party' | 'product';
 
 export interface DealColSpec {
   header: string;
@@ -16,6 +17,7 @@ export interface DealColSpec {
     kind: ImportKind;
     required?: boolean;
     enum?: string[];
+    allowed?: number[]; // 'number' only: the permitted values
   };
 }
 
@@ -26,92 +28,39 @@ const d = (v: any): string => {
   return Number.isNaN(dt.getTime()) ? '' : dt.toISOString().slice(0, 10);
 };
 
-const PAY = ['PENDING', 'PARTIAL', 'PAID'];
-
-export const SPEC_DIRECT: DealColSpec[] = [
+// One sheet shape for every deal. Import mirrors the form: Buyer, Seller,
+// Material, Qty and Rate are required; blank brokerage cells default to half
+// the material's brokerage, and the due date is Date + Due Days (service).
+export const SPEC_DEAL: DealColSpec[] = [
   { header: 'Deal ID', get: (r) => r.dealNo },
   { header: 'Date', get: (r) => d(r.date), imp: { key: 'date', kind: 'date' } },
-  { header: 'Side', get: (r) => r.side, imp: { key: 'side', kind: 'enum', required: true, enum: ['BUY', 'SELL'] } },
-  { header: 'Main Party', get: (r) => r.mainParty?.name ?? '', imp: { key: 'mainPartyId', kind: 'party', required: true } },
-  { header: 'Self Firm', get: (r) => r.selfParty?.name ?? '', imp: { key: 'selfPartyId', kind: 'self' } },
+  { header: 'Buyer', get: (r) => r.buyerParty?.name ?? '', imp: { key: 'buyerPartyId', kind: 'party', required: true } },
+  { header: 'Seller', get: (r) => r.sellerParty?.name ?? '', imp: { key: 'sellerPartyId', kind: 'party', required: true } },
   { header: 'Material', get: (r) => r.product?.code ?? '', imp: { key: 'productId', kind: 'product', required: true } },
   { header: 'Qty (MT)', get: (r) => n(r.quantity), imp: { key: 'quantity', kind: 'number', required: true } },
   { header: 'Rate', get: (r) => n(r.rate), imp: { key: 'rate', kind: 'number', required: true } },
-  { header: 'Value', get: (r) => n(r.value) },
-  { header: 'Market Rate', get: (r) => n(r.marketRate), imp: { key: 'marketRate', kind: 'number' } },
-  { header: 'MTM', get: (r) => n(r.mtm) },
-  { header: 'Brokerage /MT', get: (r) => n(r.brokerageRate), imp: { key: 'brokerageRate', kind: 'number' } },
+  { header: 'Buyer Brokerage /MT', get: (r) => n(r.buyerBrokerage), imp: { key: 'buyerBrokerage', kind: 'number' } },
+  { header: 'Seller Brokerage /MT', get: (r) => n(r.sellerBrokerage), imp: { key: 'sellerBrokerage', kind: 'number' } },
   { header: 'Brokerage Total', get: (r) => n(r.brokerageTotal) },
-  { header: 'Due Date', get: (r) => d(r.dueDate), imp: { key: 'dueDate', kind: 'date' } },
-  { header: 'Payment', get: (r) => r.paymentStatus, imp: { key: 'paymentStatus', kind: 'enum', enum: PAY } },
-  { header: 'Status', get: (r) => r.status, imp: { key: 'status', kind: 'enum', enum: ['OPEN', 'CLOSED', 'CANCELLED'] } },
-  { header: 'Remarks', get: (r) => r.remarks ?? '', imp: { key: 'remarks', kind: 'string' } },
+  { header: 'Port', get: (r) => r.port ?? '', imp: { key: 'port', kind: 'string' } },
+  { header: 'Payment Condition', get: (r) => r.paymentCondition ?? '', imp: { key: 'paymentCondition', kind: 'string' } },
+  { header: 'Lifting Due Date', get: (r) => d(r.liftingDate), imp: { key: 'liftingDate', kind: 'date' } },
+  { header: 'Shipment', get: (r) => r.shipmentMonth ?? '', imp: { key: 'shipmentMonth', kind: 'string' } },
+  { header: 'Deposit', get: (r) => n(r.deposit), imp: { key: 'deposit', kind: 'number' } },
+  { header: 'Due Days', get: (r) => n(r.dueDays), imp: { key: 'dueDays', kind: 'number', allowed: DUE_DAY_OPTIONS } },
+  { header: 'Due Date', get: (r) => d(r.dueDate) }, // calculated: Date + Due Days
+  // Required when the seller is our own firm: the purchase deal no. it sells from.
+  { header: 'Sold From', get: (r) => r.sourceDeal?.dealNo ?? '', imp: { key: 'sourceDealNo', kind: 'string' } },
 ];
-
-// Broker rows are DirectDeals with kind=BROKERAGE: no side / main party / self firm,
-// and value / market rate / MTM are always 0 — so they get their own sheet shape.
-// Export only: no `imp` descriptors, so importing a broker sheet is not yet supported.
-export const SPEC_BROKER: DealColSpec[] = [
-  { header: 'Deal ID', get: (r) => r.dealNo },
-  { header: 'Date', get: (r) => d(r.date) },
-  { header: 'Buyer', get: (r) => r.buyerParty?.name ?? '' },
-  { header: 'Seller', get: (r) => r.sellerParty?.name ?? '' },
-  { header: 'Material', get: (r) => r.product?.code ?? '' },
-  { header: 'Qty (MT)', get: (r) => n(r.quantity) },
-  { header: 'Rate', get: (r) => n(r.rate) },
-  { header: 'Buyer Brokerage /MT', get: (r) => n(r.buyerBrokerageRate) },
-  { header: 'Seller Brokerage /MT', get: (r) => n(r.sellerBrokerageRate) },
-  { header: 'Buyer Brokerage', get: (r) => n(r.buyerBrokerageTotal) },
-  { header: 'Seller Brokerage', get: (r) => n(r.sellerBrokerageTotal) },
-  { header: 'Brokerage Total', get: (r) => n(r.brokerageTotal) },
-  { header: 'Due Date', get: (r) => d(r.dueDate) },
-  { header: 'Payment', get: (r) => r.paymentStatus },
-  { header: 'Status', get: (r) => r.status },
-  { header: 'Remarks', get: (r) => r.remarks ?? '' },
-];
-
-export const SPEC_DEGUM: DealColSpec[] = [
-  { header: 'Deal ID', get: (r) => r.dealNo },
-  { header: 'Date', get: (r) => d(r.dealDate), imp: { key: 'dealDate', kind: 'date' } },
-  { header: 'Material', get: (r) => r.product?.code ?? '', imp: { key: 'productId', kind: 'product', required: true } },
-  { header: 'Shipment Month', get: (r) => r.shipmentMonth ?? '', imp: { key: 'shipmentMonth', kind: 'string' } },
-  { header: 'Origin/Port', get: (r) => r.originPort ?? '', imp: { key: 'originPort', kind: 'string' } },
-  { header: 'Main Party', get: (r) => r.mainParty?.name ?? '', imp: { key: 'mainPartyId', kind: 'party', required: true } },
-  { header: 'Self Firm', get: (r) => r.selfParty?.name ?? '', imp: { key: 'selfPartyId', kind: 'self' } },
-  { header: 'Qty (MT)', get: (r) => n(r.quantity), imp: { key: 'quantity', kind: 'number', required: true } },
-  { header: 'Buy Rate', get: (r) => n(r.buyRate), imp: { key: 'buyRate', kind: 'number', required: true } },
-  { header: 'Sell Rate', get: (r) => n(r.sellRate), imp: { key: 'sellRate', kind: 'number', required: true } },
-  { header: 'Buy Value', get: (r) => n(r.buyValue) },
-  { header: 'Sell Value', get: (r) => n(r.sellValue) },
-  { header: 'Gross Margin', get: (r) => n(r.grossMargin) },
-  { header: 'Brokerage /MT', get: (r) => n(r.brokerageRate), imp: { key: 'brokerageRate', kind: 'number' } },
-  { header: 'Brokerage Total', get: (r) => n(r.brokerageTotal) },
-  { header: 'Ship Name?', get: (r) => (r.shipNameReceived ? 'Yes' : 'No'), imp: { key: 'shipNameReceived', kind: 'bool' } },
-  { header: 'Vessel', get: (r) => r.vessel ?? '', imp: { key: 'vessel', kind: 'string' } },
-  { header: 'Payment Due', get: (r) => d(r.paymentDueDate), imp: { key: 'paymentDueDate', kind: 'date' } },
-  { header: 'Payment', get: (r) => r.paymentStatus, imp: { key: 'paymentStatus', kind: 'enum', enum: PAY } },
-  { header: 'Status', get: (r) => r.status, imp: { key: 'status', kind: 'enum', enum: ['OPEN', 'SHIPMENT_CONFIRMED', 'DELIVERED', 'CLOSED'] } },
-  { header: 'Remarks', get: (r) => r.remarks ?? '', imp: { key: 'remarks', kind: 'string' } },
-];
-
-export type DealSpecKey = 'direct' | 'broker' | 'degum';
-
-export const SPECS: Record<DealSpecKey, DealColSpec[]> = { direct: SPEC_DIRECT, broker: SPEC_BROKER, degum: SPEC_DEGUM };
-
-const SHEET_NAME: Record<DealSpecKey, string> = {
-  direct: 'Direct Deals',
-  broker: 'Brokerage Deals',
-  degum: 'Degum Deals',
-};
 
 // ── Workbook build (export) ──────────────────────────────────────────────────
-export function buildDealWorkbook(type: DealSpecKey, rows: any[]): Buffer {
-  const cols = SPECS[type];
+export function buildDealWorkbook(rows: any[]): Buffer {
+  const cols = SPEC_DEAL;
   const aoa = [cols.map((c) => c.header), ...rows.map((r) => cols.map((c) => c.get(r)))];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols'] = cols.map((c) => ({ wch: Math.max(10, c.header.length + 2) }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, SHEET_NAME[type]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Deals');
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 }
 
@@ -133,9 +82,8 @@ export function parseWorkbook(buffer: Buffer): { headers: string[]; rows: Record
 
 // ── Row validation + resolution ──────────────────────────────────────────────
 export interface ImportLookups {
-  partyByName: Map<string, { id: string; isSelf: boolean }>;
+  partyByName: Map<string, { id: string }>;
   productByCode: Map<string, { id: string }>;
-  selfParties: { id: string; name: string }[];
 }
 export interface ImportError {
   row: number;
@@ -185,6 +133,7 @@ export function resolveImportRows(
           const num = Number(String(rawVal).replace(/,/g, '').trim());
           if (!Number.isFinite(num)) push(`"${c.header}" must be a number (got "${rawVal}")`);
           else if (num < 0) push(`"${c.header}" cannot be negative`);
+          else if (c.imp.allowed && !c.imp.allowed.includes(num)) push(`"${c.header}" must be one of ${c.imp.allowed.join(', ')} (got "${rawVal}")`);
           else rec[c.imp.key] = num;
           break;
         }
@@ -215,21 +164,7 @@ export function resolveImportRows(
           else rec[c.imp.key] = hit.id;
           break;
         }
-        case 'self': {
-          const hit = lk.partyByName.get(norm(rawVal));
-          if (!hit) push(`Self firm "${rawVal}" not found`);
-          else if (!hit.isSelf) push(`"${rawVal}" is not a Self firm`);
-          else rec[c.imp.key] = hit.id;
-          break;
-        }
       }
-    }
-
-    // default the Self firm when the column is blank and exactly one self firm exists
-    if (!rec.selfPartyId) {
-      if (lk.selfParties.length === 1) rec.selfPartyId = lk.selfParties[0].id;
-      else if (lk.selfParties.length === 0) push(`No Self firm exists — create one before importing`);
-      else push(`"Self Firm" is required (multiple self firms exist)`);
     }
 
     records.push(rec);
@@ -238,7 +173,7 @@ export function resolveImportRows(
   return { records, errors };
 }
 
-/** Headers that must be present in the uploaded file for a given deal type. */
-export function requiredHeaders(type: 'direct' | 'degum'): string[] {
-  return SPECS[type].filter((c) => c.imp?.required).map((c) => c.header);
+/** Headers that must be present in the uploaded file. */
+export function requiredHeaders(): string[] {
+  return SPEC_DEAL.filter((c) => c.imp?.required).map((c) => c.header);
 }

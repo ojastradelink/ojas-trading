@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
-import { ArrowLeft, Building2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Building2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { DataTable } from '@/components/data-table';
@@ -17,7 +17,7 @@ import { apiDelete, apiGet, apiPatch, apiPost, type Paginated } from '@/lib/api'
 
 interface Party {
   id: string; name: string; type: 'BUYER' | 'SELLER' | 'BOTH'; isSelf: boolean;
-  contactPerson?: string; phone?: string; email?: string; address?: string; city?: string; gstin?: string; notes?: string;
+  contactPerson?: string; phones?: string[]; email?: string; address?: string; city?: string; gstin?: string; notes?: string;
 }
 
 const typeColor = (t: string) => (t === 'BUYER' ? '#6366f1' : t === 'SELLER' ? '#8b5cf6' : '#0ea5e9');
@@ -40,7 +40,8 @@ export default function PartiesPage() {
     mutationFn: async () => {
       const payload = {
         name: form.name, type: form.type ?? 'BOTH', isSelf: !!form.isSelf,
-        contactPerson: form.contactPerson || undefined, phone: form.phone || undefined,
+        contactPerson: form.contactPerson || undefined,
+        phones: ((form.phones ?? []) as string[]).map((p) => p.trim()).filter(Boolean),
         email: form.email || undefined, city: form.city || undefined,
         gstin: form.gstin || undefined, address: form.address || undefined, notes: form.notes || undefined,
       };
@@ -63,7 +64,7 @@ export default function PartiesPage() {
   function close() { setEditing(null); setCreating(false); setForm({}); setErr(''); }
 
   function openCreate(asSelf = false) {
-    setForm({ type: 'BOTH', isSelf: asSelf });
+    setForm({ type: 'BOTH', isSelf: asSelf, phones: [''] });
     setCreating(true);
   }
 
@@ -76,7 +77,7 @@ export default function PartiesPage() {
   useEffect(() => {
     if (editQuery.data) {
       const p = editQuery.data;
-      setForm({ name: p.name, type: p.type, isSelf: p.isSelf, contactPerson: p.contactPerson, phone: p.phone, email: p.email, city: p.city, gstin: p.gstin, address: p.address, notes: p.notes });
+      setForm({ name: p.name, type: p.type, isSelf: p.isSelf, contactPerson: p.contactPerson, phones: p.phones?.length ? p.phones : [''], email: p.email, city: p.city, gstin: p.gstin, address: p.address, notes: p.notes });
     }
   }, [editQuery.data]);
 
@@ -88,7 +89,7 @@ export default function PartiesPage() {
     { id: 'self', header: 'Self', enableSorting: false,
       cell: ({ row }) => row.original.isSelf ? <Badge color="#22c55e">SELF FIRM</Badge> : <span className="text-muted-foreground">—</span> },
     { id: 'city', header: 'City / Region', accessorKey: 'city', enableSorting: false, cell: ({ row }) => row.original.city ?? '—' },
-    { id: 'phone', header: 'Phone', accessorKey: 'phone', enableSorting: false, cell: ({ row }) => row.original.phone ?? '—' },
+    { id: 'phones', header: 'Phone', enableSorting: false, cell: ({ row }) => row.original.phones?.length ? row.original.phones.join(', ') : '—' },
     { id: 'gstin', header: 'GSTIN', accessorKey: 'gstin', enableSorting: false, cell: ({ row }) => row.original.gstin ?? '—' },
     { id: '_actions', header: '', enableSorting: false,
       cell: ({ row }) => (
@@ -100,6 +101,8 @@ export default function PartiesPage() {
   ];
 
   const open = creating || !!editing;
+  const phones: string[] = form.phones?.length ? form.phones : [''];
+  const setPhones = (next: string[]) => setForm((s) => ({ ...s, phones: next }));
 
   return (
     <div>
@@ -108,7 +111,7 @@ export default function PartiesPage() {
       </Link>
       <PageHeader
         title="Parties"
-        description="Buyers, sellers & your own firm — brokerage is set per deal, per ton"
+        description="Buyers, sellers & your own firm"
         actions={
           <>
             <Button variant="outline" size="sm" onClick={() => openCreate(true)}>
@@ -161,13 +164,37 @@ export default function PartiesPage() {
             </Select>
           </div>
           <div className="space-y-1.5"><Label>Contact Person</Label><Input value={form.contactPerson ?? ''} onChange={(e) => setForm((s) => ({ ...s, contactPerson: e.target.value }))} /></div>
-          <div className="space-y-1.5"><Label>Phone</Label><Input value={form.phone ?? ''} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} /></div>
           <div className="space-y-1.5"><Label>City / Region</Label><Input value={form.city ?? ''} onChange={(e) => setForm((s) => ({ ...s, city: e.target.value }))} /></div>
           <div className="space-y-1.5"><Label>GSTIN</Label><Input value={form.gstin ?? ''} onChange={(e) => setForm((s) => ({ ...s, gstin: e.target.value }))} /></div>
-          <div className="space-y-1.5 sm:col-span-2"><Label>Email</Label><Input value={form.email ?? ''} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} /></div>
+          <div className="space-y-1.5"><Label>Email</Label><Input value={form.email ?? ''} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} /></div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label>Phone Numbers</Label>
+            {phones.map((ph, i) => (
+              <div key={i} className="flex gap-2">
+                <Input
+                  type="tel"
+                  value={ph}
+                  placeholder={i === 0 ? 'Primary number' : 'Another number'}
+                  onChange={(e) => setPhones(phones.map((x, j) => (j === i ? e.target.value : x)))}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Remove number"
+                  disabled={phones.length === 1 && !ph}
+                  onClick={() => setPhones(phones.length === 1 ? [''] : phones.filter((_, j) => j !== i))}
+                >
+                  <X className="size-4" />
+                </Button>
+              </div>
+            ))}
+            <Button variant="outline" size="sm" onClick={() => setPhones([...phones, ''])}>
+              <Plus className="size-4" /> Add phone number
+            </Button>
+          </div>
           <label className="flex items-center gap-2 sm:col-span-2 text-sm">
             <input type="checkbox" className="size-4" checked={!!form.isSelf} onChange={(e) => setForm((s) => ({ ...s, isSelf: e.target.checked }))} />
-            This is our own firm (Self) — it is the second party on every deal & its trades count as self holdings
+            This is our own firm (Self)
           </label>
         </div>
 

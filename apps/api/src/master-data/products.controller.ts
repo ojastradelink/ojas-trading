@@ -6,7 +6,6 @@ import {
   Param,
   Patch,
   Post,
-  Put,
   Query,
   Req,
 } from '@nestjs/common';
@@ -16,11 +15,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { PaginationQueryDto } from '../common/dto/pagination.dto';
 import { RequestUser } from '../common/types/request-user';
-import {
-  CreateProductDto,
-  UpdateMarketRateDto,
-  UpdateProductDto,
-} from './dto/product.dto';
+import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 import { ProductsService } from './products.service';
 
 @ApiTags('Master Data — Products')
@@ -67,18 +62,6 @@ export class ProductsController {
     @Req() req: Request,
   ) {
     return this.products.update(user, id, dto, this.ctx(req));
-  }
-
-  /** Update only the market rate — cascades MTM recalculation. */
-  @Put(':id/market-rate')
-  @RequirePermissions('product:update')
-  updateMarketRate(
-    @Param('id') id: string,
-    @CurrentUser() user: RequestUser,
-    @Body() dto: UpdateMarketRateDto,
-    @Req() req: Request,
-  ) {
-    return this.products.updateMarketRate(user, id, dto, this.ctx(req));
   }
 
   @Delete(':id')

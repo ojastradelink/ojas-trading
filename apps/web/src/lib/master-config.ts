@@ -25,7 +25,7 @@ export const MASTER_RESOURCES: MasterResource[] = [
       { key: 'name', label: 'Name' },
       { key: 'type', label: 'Type' },
       { key: 'city', label: 'City / Region' },
-      { key: 'phone', label: 'Phone' },
+      { key: 'phones', label: 'Phone' },
       { key: 'gstin', label: 'GSTIN' },
     ],
     fields: [
@@ -41,7 +41,6 @@ export const MASTER_RESOURCES: MasterResource[] = [
         ],
       },
       { key: 'contactPerson', label: 'Contact Person' },
-      { key: 'phone', label: 'Phone' },
       { key: 'email', label: 'Email', type: 'email' },
       { key: 'city', label: 'City / Region' },
       { key: 'gstin', label: 'GSTIN' },
@@ -57,14 +56,14 @@ export const MASTER_RESOURCES: MasterResource[] = [
     columns: [
       { key: 'code', label: 'Code' },
       { key: 'name', label: 'Name' },
-      { key: 'marketRate', label: 'Market Rate (₹/MT)' },
+      { key: 'brokerage', label: 'Brokerage Total (₹/MT)' },
       { key: 'unit', label: 'Unit' },
     ],
     fields: [
       { key: 'code', label: 'Product Code', required: true },
       { key: 'name', label: 'Product Name', required: true },
       { key: 'unit', label: 'Unit' },
-      { key: 'marketRate', label: 'Market Rate (₹/MT)', type: 'number' },
+      { key: 'brokerage', label: 'Brokerage Total (₹/MT)', type: 'number' },
     ],
   },
 ];

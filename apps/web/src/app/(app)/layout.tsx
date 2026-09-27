@@ -13,7 +13,7 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
-  const { accessToken, user, clear, setSession, refreshToken, hasHydrated } = useAuth();
+  const { accessToken, clear, setUser, hasHydrated } = useAuth();
   const [ready, setReady] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
@@ -30,8 +30,9 @@ export default function AppLayout({
       try {
         const me = await apiGet<AuthUser>('/auth/me');
         if (!active) return;
-        // keep store user fresh
-        setSession({ accessToken, refreshToken: refreshToken ?? '', user: me });
+        // Keep the stored user fresh. Only the user: /auth/me may have just
+        // refreshed the tokens, and this render still holds the old ones.
+        setUser(me);
         setReady(true);
       } catch {
         if (!active) return;

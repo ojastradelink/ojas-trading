@@ -21,11 +21,7 @@ export class NumberingService {
       string,
       { prefix: string; padding: number; resetYearly: boolean }
     > = {
-      DISPATCH: { prefix: 'DSP', padding: 3, resetYearly: false },
-      DIRECT: { prefix: 'DD', padding: 3, resetYearly: false },
-      DEGUM: { prefix: 'DG', padding: 3, resetYearly: false },
-      CHAIN: { prefix: 'SC', padding: 3, resetYearly: false },
-      TANKER: { prefix: 'ORD', padding: 3, resetYearly: false },
+      DEAL: { prefix: 'DL', padding: 3, resetYearly: false },
       PARTY: { prefix: 'PTY', padding: 4, resetYearly: false },
     };
     return map[key] ?? { prefix: key, padding: 5, resetYearly: true };

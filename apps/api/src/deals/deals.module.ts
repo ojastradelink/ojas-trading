@@ -1,12 +1,11 @@
 import { Module } from '@nestjs/common';
-import { AnalyticsController } from './analytics.controller';
-import { AnalyticsService } from './analytics.service';
-import { DegumDealController, DirectDealController } from './deals.controller';
-import { DegumDealService, DirectDealService } from './deals.service';
+import { DealController } from './deals.controller';
+import { TradingModule } from '../trading/trading.module';
+import { DealService } from './deals.service';
 
 @Module({
-  controllers: [DirectDealController, DegumDealController, AnalyticsController],
-  providers: [DirectDealService, DegumDealService, AnalyticsService],
-  exports: [AnalyticsService],
+  imports: [TradingModule],
+  controllers: [DealController],
+  providers: [DealService],
 })
 export class DealsModule {}

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { PartyType } from '@prisma/client';
 import {
+  IsArray,
   IsBoolean,
   IsBooleanString,
   IsEmail,
@@ -30,7 +31,8 @@ export class CreatePartyDto {
   isSelf?: boolean;
 
   @ApiPropertyOptional() @IsOptional() @IsString() contactPerson?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() phone?: string;
+  @ApiPropertyOptional({ type: [String], description: 'Contact numbers' })
+  @IsOptional() @IsArray() @IsString({ each: true }) phones?: string[];
   @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() address?: string;
   @ApiPropertyOptional({ description: 'City / Region' }) @IsOptional() @IsString() city?: string;

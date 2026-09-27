@@ -1,8 +1,8 @@
-export type Fmt = 'money' | 'num' | 'qty' | 'date' | 'badge' | 'bool' | 'text';
+export type Fmt = 'money' | 'num' | 'qty' | 'date' | 'text';
 export type FieldType = 'text' | 'number' | 'date' | 'select';
 
 export interface DealColumn {
-  key: string; // supports dot-path e.g. "mainParty.name"
+  key: string; // supports dot-path e.g. "buyerParty.name"
   label: string;
   fmt?: Fmt;
 }
@@ -10,15 +10,13 @@ export interface DealField {
   key: string;
   label: string;
   type: FieldType;
-  /** 'parties' = any party; 'self-parties' = only Self firms; 'products' = products */
-  ref?: 'parties' | 'self-parties' | 'products';
+  /** 'parties' = any party; 'products' = products (materials); 'sources' = a self firm's purchases with stock */
+  ref?: 'parties' | 'products' | 'sources';
   options?: { value: string; label: string }[];
+  /** Label of a select's blank option (defaults to "Select…"). */
+  emptyLabel?: string;
   required?: boolean;
-  bool?: boolean; // select that maps to boolean
-}
-export interface RowChip {
-  color: string;
-  label: string;
+  hint?: string;
 }
 export interface FilterSpec {
   key: string;
@@ -26,254 +24,74 @@ export interface FilterSpec {
   kind: 'select' | 'product' | 'party';
   options?: { value: string; label: string }[];
 }
-export interface DealType {
-  slug: string;
-  label: string;
-  endpoint: string;
-  idKey: string;
-  /**
-   * Direct-deal records carry a `kind` discriminator. When set, the tab is scoped
-   * to that kind — it is sent as a list filter and stamped onto every new row —
-   * so one endpoint backs two tabs with their own columns, filters and form.
-   */
-  kind?: 'PRINCIPAL' | 'BROKERAGE';
-  /** False when no import sheet spec exists for this tab (hides the Import button). */
-  canImport?: boolean;
-  columns: DealColumn[];
-  fields: DealField[];
-  /** Filter controls shown in the filter panel. */
-  filters?: FilterSpec[];
-  /** Server-side sort options (value = a whitelisted scalar column). */
-  sorts?: { label: string; value: string }[];
-  /** Optional per-row status dot shown at the left of the row. */
-  rowChip?: (row: any) => RowChip | null;
-  /** Legend shown above the table when rowChip is set. */
-  chipLegend?: RowChip[];
-}
 
-const SIDE = [
-  { value: 'BUY', label: 'Buy' },
-  { value: 'SELL', label: 'Sell' },
-];
-const PAY_STATUS = ['PENDING', 'PARTIAL', 'PAID'].map((v) => ({ value: v, label: v }));
-const DIRECT_STATUS = ['OPEN', 'CLOSED', 'CANCELLED'].map((v) => ({ value: v, label: v }));
-const DEGUM_STATUS = ['OPEN', 'SHIPMENT_CONFIRMED', 'DELIVERED', 'CLOSED'].map((v) => ({ value: v, label: v }));
-const YESNO = [
-  { value: 'true', label: 'Yes' },
-  { value: 'false', label: 'No' },
+export const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+].map((m) => ({ value: m, label: m }));
+
+/** Payment terms for the due date — days after the trade date. */
+export const DUE_DAY_OPTIONS = [7, 10];
+
+export const DEAL_ENDPOINT = '/deals';
+
+export const DEAL_COLUMNS: DealColumn[] = [
+  { key: 'dealNo', label: 'Deal ID' },
+  { key: 'date', label: 'Date', fmt: 'date' },
+  { key: 'buyerParty.name', label: 'Buyer' },
+  { key: 'sellerParty.name', label: 'Seller' },
+  { key: 'sourceDeal.dealNo', label: 'Sold From' },
+  { key: 'product.code', label: 'Material' },
+  { key: 'quantity', label: 'Qty (MT)', fmt: 'qty' },
+  { key: 'rate', label: 'Rate', fmt: 'money' },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage ₹/MT', fmt: 'money' },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage ₹/MT', fmt: 'money' },
+  { key: 'brokerageTotal', label: 'Brokerage Total', fmt: 'money' },
+  { key: 'port', label: 'Port' },
+  { key: 'paymentCondition', label: 'Payment Condition' },
+  { key: 'liftingDate', label: 'Lifting Due Date', fmt: 'date' },
+  { key: 'shipmentMonth', label: 'Shipment' },
+  { key: 'deposit', label: 'Deposit', fmt: 'money' },
+  { key: 'dueDate', label: 'Due Date', fmt: 'date' },
 ];
 
-/** Traffic light on days-to-due — shared by both direct-deal tabs. */
-const dueDateChip = (r: any): RowChip => {
-  const dl = r.daysLeft; // = Due/Delivery Date − today; null if no due date
-  if (dl == null) return { color: '#3b82f6', label: 'No due date set' };
-  if (dl < 0) return { color: '#ef4444', label: `Overdue — ${Math.abs(dl)} day(s) past due` };
-  if (dl <= 3) return { color: '#f59e0b', label: `Due soon — ${dl} day(s) left` };
-  return { color: '#22c55e', label: 'On track — more than 3 days to due date' };
-};
-const DAYS_LEFT_LEGEND: RowChip[] = [
-  { color: '#3b82f6', label: 'No due date' },
-  { color: '#22c55e', label: 'More than 3 days' },
-  { color: '#f59e0b', label: 'Less than 3 days' },
-  { color: '#ef4444', label: 'Overdue' },
+export const DEAL_FIELDS: DealField[] = [
+  { key: 'date', label: 'Date', type: 'date' },
+  { key: 'productId', label: 'Material', type: 'select', ref: 'products', required: true },
+  { key: 'buyerPartyId', label: 'Buyer', type: 'select', ref: 'parties', required: true },
+  { key: 'sellerPartyId', label: 'Seller', type: 'select', ref: 'parties', required: true },
+  // Shown only when the seller is our own firm: the purchase deal the stock comes from.
+  { key: 'sourceDealId', label: 'Selling From (purchase deal)', type: 'select', ref: 'sources', required: true },
+  { key: 'quantity', label: 'Qty (MT)', type: 'number', required: true },
+  { key: 'rate', label: 'Rate (₹/MT)', type: 'number', required: true },
+  { key: 'buyerBrokerage', label: 'Buyer Brokerage (₹/MT)', type: 'number', hint: 'Half of the material’s brokerage — editable' },
+  { key: 'sellerBrokerage', label: 'Seller Brokerage (₹/MT)', type: 'number', hint: 'Half of the material’s brokerage — editable' },
+  { key: 'port', label: 'Port', type: 'text' },
+  { key: 'paymentCondition', label: 'Payment Condition', type: 'text' },
+  { key: 'liftingDate', label: 'Lifting Due Date', type: 'date' },
+  { key: 'shipmentMonth', label: 'Shipment', type: 'select', options: MONTHS },
+  { key: 'deposit', label: 'Deposit (₹)', type: 'number' },
+  {
+    key: 'dueDays', label: 'Due Date', type: 'select', emptyLabel: 'No due date',
+    options: DUE_DAY_OPTIONS.map((d) => ({ value: String(d), label: `${d} days from trade date` })),
+  },
 ];
 
-export const DEAL_TYPES: Record<string, DealType> = {
-  // Principal leg — a Self firm buys or sells against one external Main party.
-  // Holds stock, so value / market rate / MTM matter; brokerage is a single rate.
-  'direct-deals': {
-    slug: 'direct-deals',
-    label: 'Direct Deals',
-    endpoint: '/direct-deals',
-    idKey: 'dealNo',
-    kind: 'PRINCIPAL',
-    rowChip: dueDateChip,
-    chipLegend: DAYS_LEFT_LEGEND,
-    filters: [
-      { key: 'side', label: 'Side', kind: 'select', options: SIDE },
-      { key: 'status', label: 'Status', kind: 'select', options: DIRECT_STATUS },
-      { key: 'paymentStatus', label: 'Payment', kind: 'select', options: PAY_STATUS },
-      { key: 'productId', label: 'Material', kind: 'product' },
-      { key: 'mainPartyId', label: 'Main Party', kind: 'party' },
-    ],
-    sorts: [
-      { label: 'Date', value: 'date' },
-      { label: 'Deal ID', value: 'dealNo' },
-      { label: 'Qty', value: 'quantity' },
-      { label: 'Rate', value: 'rate' },
-      { label: 'Value', value: 'value' },
-      { label: 'MTM', value: 'mtm' },
-      { label: 'Brokerage Total', value: 'brokerageTotal' },
-      { label: 'Due Date', value: 'dueDate' },
-    ],
-    columns: [
-      { key: 'dealNo', label: 'Deal ID' },
-      { key: 'date', label: 'Date', fmt: 'date' },
-      { key: 'side', label: 'Side', fmt: 'badge' },
-      { key: 'mainParty.name', label: 'Main Party' },
-      { key: 'selfParty.name', label: 'Self Firm' },
-      { key: 'product.code', label: 'Material' },
-      { key: 'quantity', label: 'Qty (MT)', fmt: 'qty' },
-      { key: 'rate', label: 'Rate', fmt: 'money' },
-      { key: 'value', label: 'Value', fmt: 'money' },
-      { key: 'marketRate', label: 'Market Rate', fmt: 'money' },
-      { key: 'mtm', label: 'MTM', fmt: 'money' },
-      { key: 'brokerageRate', label: 'Brokerage ₹/MT', fmt: 'money' },
-      { key: 'brokerageTotal', label: 'Brokerage Total', fmt: 'money' },
-      { key: 'dueDate', label: 'Due', fmt: 'date' },
-      { key: 'daysLeft', label: 'Days Left', fmt: 'num' },
-      { key: 'paymentStatus', label: 'Payment', fmt: 'badge' },
-    ],
-    fields: [
-      { key: 'date', label: 'Date', type: 'date' },
-      { key: 'side', label: 'Buy / Sell (Self firm side)', type: 'select', options: SIDE, required: true },
-      { key: 'mainPartyId', label: 'Main Party', type: 'select', ref: 'parties' },
-      { key: 'selfPartyId', label: 'Self Firm', type: 'select', ref: 'self-parties' },
-      { key: 'productId', label: 'Material', type: 'select', ref: 'products' },
-      { key: 'quantity', label: 'Qty (MT)', type: 'number', required: true },
-      { key: 'rate', label: 'Rate (₹/MT)', type: 'number', required: true },
-      { key: 'marketRate', label: 'Market Rate (₹/MT)', type: 'number' },
-      { key: 'brokerageRate', label: 'Brokerage (₹/MT)', type: 'number' },
-      { key: 'dueDate', label: 'Due / Delivery Date', type: 'date' },
-      { key: 'paymentStatus', label: 'Payment Status', type: 'select', options: PAY_STATUS },
-      { key: 'remarks', label: 'Remarks', type: 'text' },
-    ],
-  },
+export const DEAL_FILTERS: FilterSpec[] = [
+  { key: 'productId', label: 'Material', kind: 'product' },
+  { key: 'buyerPartyId', label: 'Buyer', kind: 'party' },
+  { key: 'sellerPartyId', label: 'Seller', kind: 'party' },
+  { key: 'shipmentMonth', label: 'Shipment', kind: 'select', options: MONTHS },
+];
 
-  // Brokerage leg — we broker between two external parties and hold nothing, so
-  // value / market rate / MTM are always 0 and each side pays its own per-ton rate.
-  'brokerage-deals': {
-    slug: 'brokerage-deals',
-    label: 'Brokerage Deals',
-    endpoint: '/direct-deals',
-    idKey: 'dealNo',
-    kind: 'BROKERAGE',
-    canImport: false,
-    rowChip: dueDateChip,
-    chipLegend: DAYS_LEFT_LEGEND,
-    filters: [
-      { key: 'status', label: 'Status', kind: 'select', options: DIRECT_STATUS },
-      { key: 'paymentStatus', label: 'Payment', kind: 'select', options: PAY_STATUS },
-      { key: 'productId', label: 'Material', kind: 'product' },
-      { key: 'buyerPartyId', label: 'Buyer', kind: 'party' },
-      { key: 'sellerPartyId', label: 'Seller', kind: 'party' },
-    ],
-    sorts: [
-      { label: 'Date', value: 'date' },
-      { label: 'Deal ID', value: 'dealNo' },
-      { label: 'Qty', value: 'quantity' },
-      { label: 'Rate', value: 'rate' },
-      { label: 'Buyer Brokerage', value: 'buyerBrokerageTotal' },
-      { label: 'Seller Brokerage', value: 'sellerBrokerageTotal' },
-      { label: 'Brokerage Total', value: 'brokerageTotal' },
-      { label: 'Due Date', value: 'dueDate' },
-    ],
-    columns: [
-      { key: 'dealNo', label: 'Deal ID' },
-      { key: 'date', label: 'Date', fmt: 'date' },
-      { key: 'buyerParty.name', label: 'Buyer' },
-      { key: 'sellerParty.name', label: 'Seller' },
-      { key: 'product.code', label: 'Material' },
-      { key: 'quantity', label: 'Qty (MT)', fmt: 'qty' },
-      { key: 'rate', label: 'Rate', fmt: 'money' },
-      { key: 'buyerBrokerageRate', label: 'Buyer ₹/MT', fmt: 'money' },
-      { key: 'sellerBrokerageRate', label: 'Seller ₹/MT', fmt: 'money' },
-      { key: 'buyerBrokerageTotal', label: 'Buyer Brokerage', fmt: 'money' },
-      { key: 'sellerBrokerageTotal', label: 'Seller Brokerage', fmt: 'money' },
-      { key: 'brokerageTotal', label: 'Brokerage Total', fmt: 'money' },
-      { key: 'dueDate', label: 'Due', fmt: 'date' },
-      { key: 'daysLeft', label: 'Days Left', fmt: 'num' },
-      { key: 'paymentStatus', label: 'Payment', fmt: 'badge' },
-    ],
-    fields: [
-      { key: 'date', label: 'Date', type: 'date' },
-      { key: 'buyerPartyId', label: 'Buyer', type: 'select', ref: 'parties', required: true },
-      { key: 'sellerPartyId', label: 'Seller', type: 'select', ref: 'parties', required: true },
-      { key: 'productId', label: 'Material', type: 'select', ref: 'products' },
-      { key: 'quantity', label: 'Qty (MT)', type: 'number', required: true },
-      { key: 'rate', label: 'Rate (₹/MT)', type: 'number', required: true },
-      { key: 'buyerBrokerageRate', label: 'Buyer Brokerage (₹/MT)', type: 'number' },
-      { key: 'sellerBrokerageRate', label: 'Seller Brokerage (₹/MT)', type: 'number' },
-      { key: 'dueDate', label: 'Due / Delivery Date', type: 'date' },
-      { key: 'paymentStatus', label: 'Payment Status', type: 'select', options: PAY_STATUS },
-      { key: 'remarks', label: 'Remarks', type: 'text' },
-    ],
-  },
-
-  'degum-deals': {
-    slug: 'degum-deals',
-    label: 'Degum Deals',
-    endpoint: '/degum-deals',
-    idKey: 'dealNo',
-    // Colour driven by the Payment Due date and days left.
-    rowChip: (r: any): RowChip | null => {
-      const dl = r.daysLeft; // = Payment Due date − today; null if no due date
-      if (dl == null) return { color: '#3b82f6', label: 'Pending — no payment due date' };
-      if (dl < 0) return { color: '#ef4444', label: `Overdue — payment ${Math.abs(dl)} day(s) past due` };
-      if (dl <= 3) return { color: '#f59e0b', label: `Due soon — ${dl} day(s) remaining` };
-      return { color: '#22c55e', label: 'OK — within payment window' };
-    },
-    chipLegend: DAYS_LEFT_LEGEND,
-    filters: [
-      { key: 'status', label: 'Status', kind: 'select', options: DEGUM_STATUS },
-      { key: 'paymentStatus', label: 'Payment', kind: 'select', options: PAY_STATUS },
-      { key: 'productId', label: 'Material', kind: 'product' },
-      { key: 'mainPartyId', label: 'Main Party', kind: 'party' },
-    ],
-    sorts: [
-      { label: 'Date', value: 'dealDate' },
-      { label: 'Deal ID', value: 'dealNo' },
-      { label: 'Qty', value: 'quantity' },
-      { label: 'Buy Rate', value: 'buyRate' },
-      { label: 'Sell Rate', value: 'sellRate' },
-      { label: 'Gross Margin', value: 'grossMargin' },
-      { label: 'Payment Due', value: 'paymentDueDate' },
-    ],
-    columns: [
-      { key: 'dealNo', label: 'Deal ID' },
-      { key: 'dealDate', label: 'Date', fmt: 'date' },
-      { key: 'product.code', label: 'Material' },
-      { key: 'shipmentMonth', label: 'Shipment Month' },
-      { key: 'originPort', label: 'Origin/Port' },
-      { key: 'mainParty.name', label: 'Main Party' },
-      { key: 'selfParty.name', label: 'Self Firm' },
-      { key: 'quantity', label: 'Qty (MT)', fmt: 'qty' },
-      { key: 'buyRate', label: 'Buy Rate', fmt: 'money' },
-      { key: 'sellRate', label: 'Sell Rate', fmt: 'money' },
-      { key: 'buyValue', label: 'Buy Value', fmt: 'money' },
-      { key: 'sellValue', label: 'Sell Value', fmt: 'money' },
-      { key: 'grossMargin', label: 'Gross Margin', fmt: 'money' },
-      { key: 'brokerageRate', label: 'Brokerage ₹/MT', fmt: 'money' },
-      { key: 'brokerageTotal', label: 'Brokerage Total', fmt: 'money' },
-      { key: 'shipNameReceived', label: 'Ship Name?', fmt: 'bool' },
-      { key: 'vessel', label: 'Vessel' },
-      { key: 'paymentDueDate', label: 'Payment Due', fmt: 'date' },
-      { key: 'daysLeft', label: 'Days Left', fmt: 'num' },
-      { key: 'paymentStatus', label: 'Payment', fmt: 'badge' },
-      { key: 'status', label: 'Status', fmt: 'badge' },
-    ],
-    fields: [
-      { key: 'dealDate', label: 'Deal Date', type: 'date' },
-      { key: 'productId', label: 'Material (Degum)', type: 'select', ref: 'products' },
-      { key: 'shipmentMonth', label: 'Shipment Month', type: 'text' },
-      { key: 'originPort', label: 'Origin / Port', type: 'text' },
-      { key: 'mainPartyId', label: 'Main Party', type: 'select', ref: 'parties' },
-      { key: 'selfPartyId', label: 'Self Firm', type: 'select', ref: 'self-parties' },
-      { key: 'quantity', label: 'Qty (MT)', type: 'number', required: true },
-      { key: 'buyRate', label: 'Buy Rate (₹/MT)', type: 'number', required: true },
-      { key: 'sellRate', label: 'Sell Rate (₹/MT)', type: 'number', required: true },
-      { key: 'brokerageRate', label: 'Brokerage (₹/MT)', type: 'number' },
-      { key: 'shipNameReceived', label: 'Ship Name Received?', type: 'select', options: YESNO, bool: true },
-      { key: 'vessel', label: 'Ship Name / Vessel', type: 'text' },
-      { key: 'paymentDueDate', label: 'Payment Due Date', type: 'date' },
-      { key: 'paymentStatus', label: 'Payment Status', type: 'select', options: PAY_STATUS },
-      { key: 'status', label: 'Status', type: 'select', options: DEGUM_STATUS },
-      { key: 'remarks', label: 'Remarks', type: 'text' },
-    ],
-  },
-};
-
-export const DEAL_LIST = Object.values(DEAL_TYPES);
-export function findDeal(slug: string) {
-  return DEAL_TYPES[slug];
-}
+/** Server-side sort options (value = a whitelisted scalar column). */
+export const DEAL_SORTS = [
+  { label: 'Date', value: 'date' },
+  { label: 'Deal ID', value: 'dealNo' },
+  { label: 'Qty', value: 'quantity' },
+  { label: 'Rate', value: 'rate' },
+  { label: 'Brokerage Total', value: 'brokerageTotal' },
+  { label: 'Deposit', value: 'deposit' },
+  { label: 'Due Date', value: 'dueDate' },
+  { label: 'Lifting Due Date', value: 'liftingDate' },
+];

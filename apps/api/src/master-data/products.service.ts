@@ -7,11 +7,7 @@ import {
 } from '../common/dto/pagination.dto';
 import { RequestUser } from '../common/types/request-user';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  CreateProductDto,
-  UpdateMarketRateDto,
-  UpdateProductDto,
-} from './dto/product.dto';
+import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
 
 export interface Ctx {
   ipAddress?: string | null;
@@ -63,8 +59,8 @@ export class ProductsService {
         code: dto.code,
         name: dto.name,
         unit: dto.unit ?? 'MT',
-        marketRate: dto.marketRate ?? 0,
-        marketRateUpdatedAt: dto.marketRate != null ? new Date() : null,
+        brokerage: dto.brokerage ?? 0,
+        isDegum: dto.isDegum ?? false,
         notes: dto.notes,
       },
     });
@@ -82,11 +78,7 @@ export class ProductsService {
 
   async update(user: RequestUser, id: string, dto: UpdateProductDto, ctx: Ctx) {
     const before = await this.get(user, id);
-    const data: Prisma.ProductUpdateInput = { ...dto };
-    if (dto.marketRate != null && Number(dto.marketRate) !== Number(before.marketRate)) {
-      data.marketRateUpdatedAt = new Date();
-    }
-    const row = await this.prisma.product.update({ where: { id }, data });
+    const row = await this.prisma.product.update({ where: { id }, data: { ...dto } });
     await this.audit.record({
       companyId: user.companyId,
       actorId: user.id,
@@ -97,56 +89,7 @@ export class ProductsService {
       diff: AuditService.diff(before, row),
       ...ctx,
     });
-    if (dto.marketRate != null && Number(dto.marketRate) !== Number(before.marketRate)) {
-      await this.recomputeMtm(user.companyId, id, Number(dto.marketRate));
-    }
     return row;
-  }
-
-  /** Set a new market rate and cascade MTM recalculation across all deals. */
-  async updateMarketRate(
-    user: RequestUser,
-    id: string,
-    dto: UpdateMarketRateDto,
-    ctx: Ctx,
-  ) {
-    const before = await this.get(user, id);
-    const rate = Number(dto.marketRate);
-    const row = await this.prisma.product.update({
-      where: { id },
-      data: { marketRate: rate, marketRateUpdatedAt: new Date() },
-    });
-    const affected = await this.recomputeMtm(user.companyId, id, rate);
-    await this.audit.record({
-      companyId: user.companyId,
-      actorId: user.id,
-      action: 'RATE_UPDATE',
-      entityType: 'Product',
-      entityId: id,
-      summary: `Market rate ${before.marketRate} → ${rate} for ${row.code}; recalculated ${affected} deal(s)`,
-      ...ctx,
-    });
-    return { product: row, recalculated: affected };
-  }
-
-  /**
-   * Recompute stored MTM rollups for all Direct Deals referencing this product:
-   *   mtm = (marketRate − rate) × qty   (workbook convention)
-   */
-  private async recomputeMtm(
-    companyId: string,
-    productId: string,
-    rate: number,
-  ): Promise<number> {
-    const r = new Prisma.Decimal(rate);
-    const affected = await this.prisma.$executeRaw`
-      UPDATE "direct_deals"
-      SET "marketRate" = ${r},
-          "mtm" = (${r} - "rate") * "quantity"
-      WHERE "companyId" = ${companyId}
-        AND "productId" = ${productId}
-        AND "deletedAt" IS NULL`;
-    return Number(affected);
   }
 
   async remove(user: RequestUser, id: string, ctx: Ctx) {

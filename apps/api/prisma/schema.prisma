@@ -2,7 +2,8 @@
 //  Ojas Trading — PostgreSQL schema (Prisma)
 //
 //  Modeled directly on the client's edible-oil trading workbook + PRD v1.0.
-//  Domain: broker/principal MTM deal tracking.
+//  Domain: broker deal tracking — every deal is Buyer ↔ Seller with a
+//  per-ton brokerage charged to each side.
 //
 //  Conventions
 //  -----------
@@ -10,9 +11,7 @@
 //  • Soft delete: `deletedAt` (NULL = active). Never hard-delete.
 //  • Audit columns: createdAt / updatedAt / createdById / updatedById.
 //  • Money: Decimal(18,4); Quantity: Decimal(18,3); Weight(kg): Decimal(18,3).
-//  • Stored rollups (tradeValue/marketValue/mtm/...) are recomputed by the
-//    service layer on write and whenever a product's market rate changes.
-//  • `daysLeft` is NOT stored (it changes daily) — computed on read.
+//  • Stored rollups (brokerageTotal) are recomputed by the service layer on write.
 // ═══════════════════════════════════════════════════════════════════════════
 
 generator client {
@@ -32,40 +31,6 @@ enum PartyType {
   BUYER
   SELLER
   BOTH
-}
-
-enum DealSide {
-  BUY
-  SELL
-}
-
-// Direct Deals (Module C)
-enum DirectDealStatus {
-  OPEN
-  CLOSED
-  CANCELLED
-}
-
-// Direct Deals (Module C) — PRINCIPAL = Self firm buys/sells (holds stock, MTM);
-// BROKERAGE = we only broker a trade between an external buyer & seller (no self,
-// no inventory, no MTM) and charge each side its own brokerage.
-enum DirectDealKind {
-  PRINCIPAL
-  BROKERAGE
-}
-
-enum PaymentStatus {
-  PENDING
-  PARTIAL
-  PAID
-}
-
-// Degum Deals (Module D)
-enum DegumStatus {
-  OPEN
-  SHIPMENT_CONFIRMED
-  DELIVERED
-  CLOSED
 }
 
 enum AuditAction {
@@ -117,8 +82,8 @@ model Company {
   roles           Role[]
   parties         Party[]
   products        Product[]
-  directDeals     DirectDeal[]
-  degumDeals      DegumDeal[]
+  deals           Deal[]
+  degumDetails    DegumDetail[]
   numberSequences NumberSequence[]
   settings        Setting[]
   auditLogs       AuditLog[]
@@ -269,7 +234,7 @@ model Party {
   name          String
   type          PartyType @default(BOTH)
   contactPerson String?
-  phone         String?
+  phones        String[]  @default([]) // any number of contact numbers
   email         String?
   address       String?
   city          String? // City / Region
@@ -282,13 +247,8 @@ model Party {
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
 
-  // deal relations — a principal deal is Main ↔ Self; a broker deal is Buyer ↔ Seller
-  directAsMain   DirectDeal[] @relation("DirectMain")
-  directAsSelf   DirectDeal[] @relation("DirectSelf")
-  directAsBuyer  DirectDeal[] @relation("DirectBuyer")
-  directAsSeller DirectDeal[] @relation("DirectSeller")
-  degumAsMain    DegumDeal[]  @relation("DegumMain")
-  degumAsSelf    DegumDeal[]  @relation("DegumSelf")
+  dealsAsBuyer  Deal[]    @relation("DealBuyer")
+  dealsAsSeller Deal[]    @relation("DealSeller")
 
   @@unique([companyId, name])
   @@index([companyId, deletedAt])
@@ -304,8 +264,11 @@ model Product {
   code          String // SRO, SDO, CDSBO, MDO ...
   name          String
   unit          String    @default("MT")
-  marketRate    Decimal   @default(0) @db.Decimal(18, 4) // ₹/MT, updated daily
-  marketRateUpdatedAt DateTime?
+  // Total brokerage ₹/MT for this commodity — a new deal splits it equally
+  // between the buyer and the seller (each side can then be adjusted).
+  brokerage     Decimal   @default(0) @db.Decimal(18, 4)
+  // Degum material — its deals are imported on a vessel and tracked in the Degum section.
+  isDegum       Boolean   @default(false)
   notes         String?
   isActive      Boolean   @default(true)
 
@@ -313,8 +276,7 @@ model Product {
   updatedAt     DateTime  @updatedAt
   deletedAt     DateTime?
 
-  directDeals     DirectDeal[]
-  degumDeals      DegumDeal[]
+  deals         Deal[]
 
   @@unique([companyId, code])
   @@index([companyId, deletedAt])
@@ -322,53 +284,46 @@ model Product {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MODULE C — DIRECT DEALS (principal buy/sell)
-//   Two parties only: a Main party (the external counterparty) and our Self firm.
-//   `side` is from the Self firm's perspective — BUY = Self buys from Main.
-//   Value = Qty × Rate;  MTM = (Market Rate − Rate) × Qty
-//   Brokerage Total = Qty × Brokerage/MT  (per-deal, per-ton)
+//  DEALS — one unified broker deal: we match a Buyer with a Seller and charge
+//  each side a per-ton brokerage.
+//   Brokerage Total = Qty × (Buyer Brokerage + Seller Brokerage)
 // ═══════════════════════════════════════════════════════════════════════════
 
-model DirectDeal {
-  id          String    @id @default(cuid())
-  companyId   String
-  company     Company   @relation(fields: [companyId], references: [id])
-  dealNo      String
-  date        DateTime  @default(now())
-  kind        DirectDealKind @default(PRINCIPAL)
-  side        DealSide? // PRINCIPAL only (Self firm's perspective); null for BROKERAGE
+model Deal {
+  id            String    @id @default(cuid())
+  companyId     String
+  company       Company   @relation(fields: [companyId], references: [id])
+  dealNo        String
+  date          DateTime  @default(now())
 
-  // PRINCIPAL parties: Main (external) ↔ Self firm
-  mainPartyId String?
-  mainParty   Party?    @relation("DirectMain", fields: [mainPartyId], references: [id])
-  selfPartyId String?
-  selfParty   Party?    @relation("DirectSelf", fields: [selfPartyId], references: [id])
-  // BROKERAGE parties: external Buyer ↔ external Seller (no self firm)
   buyerPartyId  String?
-  buyerParty    Party?  @relation("DirectBuyer", fields: [buyerPartyId], references: [id])
+  buyerParty    Party?    @relation("DealBuyer", fields: [buyerPartyId], references: [id])
   sellerPartyId String?
-  sellerParty   Party?  @relation("DirectSeller", fields: [sellerPartyId], references: [id])
-  productId   String?
-  product     Product?  @relation(fields: [productId], references: [id])
+  sellerParty   Party?    @relation("DealSeller", fields: [sellerPartyId], references: [id])
+  productId     String?
+  product       Product?  @relation(fields: [productId], references: [id])
 
-  quantity    Decimal   @db.Decimal(18, 3)
-  rate        Decimal   @db.Decimal(18, 4)
-  value       Decimal   @default(0) @db.Decimal(18, 4) // ƒ (0 for BROKERAGE)
-  marketRate  Decimal   @default(0) @db.Decimal(18, 4)
-  mtm         Decimal   @default(0) @db.Decimal(18, 4) // ƒ (0 for BROKERAGE)
-  brokerageRate  Decimal @default(0) @db.Decimal(18, 4) // ₹/MT (PRINCIPAL)
-  brokerageTotal Decimal @default(0) @db.Decimal(18, 4) // ƒ total income = PRINCIPAL: Qty × brokerageRate; BROKERAGE: buyer + seller
-  // BROKERAGE: two per-ton brokerages charged separately to each side
-  buyerBrokerageRate   Decimal @default(0) @db.Decimal(18, 4) // ₹/MT
-  buyerBrokerageTotal  Decimal @default(0) @db.Decimal(18, 4) // ƒ = Qty × buyerBrokerageRate
-  sellerBrokerageRate  Decimal @default(0) @db.Decimal(18, 4) // ₹/MT
-  sellerBrokerageTotal Decimal @default(0) @db.Decimal(18, 4) // ƒ = Qty × sellerBrokerageRate
+  quantity        Decimal @db.Decimal(18, 3)
+  rate            Decimal @db.Decimal(18, 4)
+  buyerBrokerage  Decimal @default(0) @db.Decimal(18, 4) // ₹/MT charged to the buyer
+  sellerBrokerage Decimal @default(0) @db.Decimal(18, 4) // ₹/MT charged to the seller
+  brokerageTotal  Decimal @default(0) @db.Decimal(18, 4) // ƒ = Qty × (buyer + seller)
 
-  dueDate       DateTime?
-  paymentStatus PaymentStatus    @default(PENDING)
-  tankerNo      String?
-  status        DirectDealStatus @default(OPEN)
-  remarks       String?
+  port             String?
+  paymentCondition String?
+  liftingDate      DateTime? // lifting due date — drives the trading desk's red / yellow / green
+  shipmentMonth    String?
+  deposit          Decimal? @db.Decimal(18, 4) // ₹
+  dueDays          Int? // payment term: 7 or 10 days from the trade date
+  dueDate          DateTime? // ƒ = date + dueDays (older deals may hold an explicit date with no term)
+
+  degumDetail      DegumDetail? // shipment tracking — only for degum materials
+
+  // Trading desk: when our own (self) firm sells, the purchase deal the stock
+  // comes from. In hand on a purchase = its qty − the qty of sales pointing at it.
+  sourceDealId     String?
+  sourceDeal       Deal?   @relation("DealSource", fields: [sourceDealId], references: [id])
+  sales            Deal[]  @relation("DealSource")
 
   createdById String?
   updatedById String?
@@ -379,74 +334,46 @@ model DirectDeal {
   @@unique([companyId, dealNo])
   @@index([companyId, deletedAt])
   @@index([companyId, date])
-  @@index([companyId, side])
-  @@index([companyId, kind])
-  @@index([companyId, status])
-  @@index([companyId, mainPartyId])
   @@index([companyId, productId])
-  @@index([companyId, selfPartyId])
   @@index([companyId, buyerPartyId])
   @@index([companyId, sellerPartyId])
-  @@index([companyId, paymentStatus])
-  @@map("direct_deals")
+  @@index([companyId, sourceDealId])
+  @@map("deals")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MODULE D — DEGUM DEALS (import / shipment-linked)
-//   Buy Value = Qty × Buy Rate; Sell Value = Qty × Sell Rate
-//   Gross Margin = Sell Value − Buy Value; Brokerage Total = Qty × Brokerage/MT
-//   Payment Due = Vessel/Ship date + configurable days
+//  DEGUM — shipment tracking for deals on a degum material. The trade is agreed
+//  now; the vessel arrives later. Kept in its own table so filling these in
+//  never touches the deal itself.
+//   Payment Due Date = Actual Clearance Date + Payment Due Days (5–15)
+//   Final Payment    = ((Rate + Duty) × Qty) × (1 + 5% GST − 0.1% TDS) − Deposit
 // ═══════════════════════════════════════════════════════════════════════════
 
-model DegumDeal {
-  id            String    @id @default(cuid())
-  companyId     String
-  company       Company   @relation(fields: [companyId], references: [id])
-  dealNo        String
-  dealDate      DateTime?
-  productId     String?
-  product       Product?  @relation(fields: [productId], references: [id])
-  shipmentMonth String? // "Jul-25", "April Shipment", a date string
-  originPort    String?
+model DegumDetail {
+  id             String    @id @default(cuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  dealId         String    @unique
+  deal           Deal      @relation(fields: [dealId], references: [id])
 
-  // Two parties only: Main party (external) + our Self firm. Self sits in the
-  // middle, buying at buyRate and selling onward at sellRate.
-  mainPartyId   String?
-  mainParty     Party?    @relation("DegumMain", fields: [mainPartyId], references: [id])
-  selfPartyId   String?
-  selfParty     Party?    @relation("DegumSelf", fields: [selfPartyId], references: [id])
+  vesselName     String?
+  vesselEta      DateTime? // tentative arrival at port
+  clearanceDate  DateTime? // actual vessel clearance
+  tank           String?
+  terminal       String?
+  chain          String?
+  duty           Decimal?  @db.Decimal(18, 4) // ₹/MT, added to the rate for the final payment
+  paymentDueDays Int? // 5–15 days after clearance
+  paymentDueDate DateTime? // ƒ = clearanceDate + paymentDueDays
+  // Final payment is not stored: it is calculated on read (src/degum/payment.ts).
 
-  quantity      Decimal   @db.Decimal(18, 3)
-  buyRate       Decimal   @db.Decimal(18, 4)
-  sellRate      Decimal   @db.Decimal(18, 4)
-  buyValue      Decimal   @default(0) @db.Decimal(18, 4) // ƒ
-  sellValue     Decimal   @default(0) @db.Decimal(18, 4) // ƒ
-  grossMargin   Decimal   @default(0) @db.Decimal(18, 4) // ƒ
-  brokerageRate Decimal   @default(0) @db.Decimal(18, 4) // ₹/MT
-  brokerageTotal Decimal  @default(0) @db.Decimal(18, 4) // ƒ
+  createdById    String?
+  updatedById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  shipNameReceived Boolean @default(false)
-  vessel        String?
-  paymentDueDate DateTime?
-  paymentStatus PaymentStatus @default(PENDING)
-  status        DegumStatus   @default(OPEN)
-  remarks       String?
-
-  createdById String?
-  updatedById String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  deletedAt   DateTime?
-
-  @@unique([companyId, dealNo])
-  @@index([companyId, deletedAt])
-  @@index([companyId, status])
-  @@index([companyId, paymentStatus])
-  @@index([companyId, mainPartyId])
-  @@index([companyId, productId])
-  @@index([companyId, selfPartyId])
-  @@index([companyId, dealDate])
-  @@map("degum_deals")
+  @@index([companyId])
+  @@map("degum_details")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

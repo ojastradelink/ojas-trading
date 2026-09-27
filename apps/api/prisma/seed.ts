@@ -7,7 +7,7 @@ import * as path from 'path';
 const prisma = new PrismaClient();
 
 interface SeedData {
-  products: { code: string; name: string; marketRate: number; unit: string }[];
+  products: { code: string; name: string; unit: string }[];
   parties: { name: string; type: string; city: string | null; phone: string | null; notes: string | null }[];
   direct: any[];
   degum: any[];
@@ -19,8 +19,7 @@ const data: SeedData = JSON.parse(
 
 // ── Permission catalogue ────────────────────────────────────────────────────
 const RESOURCES = [
-  'dashboard', 'party', 'product', 'directdeal', 'degum',
-  'position', 'audit', 'user', 'settings',
+  'dashboard', 'party', 'product', 'deal', 'degum', 'audit', 'user', 'settings',
 ];
 const ACTIONS = ['read', 'create', 'update', 'delete'];
 const EXTRA = ['report:export'];
@@ -32,26 +31,26 @@ function permissionKeys(): string[] {
   return [...k];
 }
 
-const DEAL_RESOURCES = ['directdeal', 'degum', 'position'];
 const ROLE_POLICY: Record<string, (k: string) => boolean> = {
   ADMIN: () => true,
   MANAGEMENT: (k) => k.endsWith(':read') || k === 'report:export',
   TRADER: (k) =>
     k.startsWith('dashboard') || k.startsWith('party') || k.startsWith('product') ||
-    DEAL_RESOURCES.some((d) => k.startsWith(d)),
+    k.startsWith('deal:') || k.startsWith('degum:'),
+  // Finance records duty / final payment; Operations tracks vessels — both fill in Degum details.
   FINANCE: (k) =>
-    k.startsWith('dashboard') || k.startsWith('position') || k === 'report:export' ||
-    k === 'party:read' || k === 'product:read' || k === 'directdeal:read' || k === 'degum:read',
+    k.startsWith('dashboard') || k === 'report:export' ||
+    k === 'party:read' || k === 'product:read' || k === 'deal:read' || k === 'degum:read' || k === 'degum:update',
   OPERATIONS: (k) =>
-    k.startsWith('dashboard') || k === 'directdeal:read' || k === 'degum:read' ||
-    k === 'party:read' || k === 'product:read',
+    k.startsWith('dashboard') || k === 'deal:read' || k === 'party:read' || k === 'product:read' ||
+    k === 'degum:read' || k === 'degum:update',
   VIEWER: (k) => k.endsWith(':read'),
 };
 const ROLES = [
   { key: 'ADMIN', name: 'Administrator', description: 'Full access' },
   { key: 'MANAGEMENT', name: 'Management', description: 'Oversight + reports' },
   { key: 'TRADER', name: 'Trader', description: 'Create & manage deals' },
-  { key: 'FINANCE', name: 'Finance', description: 'Position, payments, reports' },
+  { key: 'FINANCE', name: 'Finance', description: 'Brokerage & reports' },
   { key: 'OPERATIONS', name: 'Operations', description: 'Deal logistics' },
   { key: 'VIEWER', name: 'Viewer', description: 'Read-only' },
 ];
@@ -133,27 +132,30 @@ async function main() {
     return;
   }
 
-  // ── Products ──────────────────────────────────────────────────────────────
+  // ── Products (demo brokerage: ₹200/MT, split ₹100 each side) ──────────────
   console.log(`▶ Products (${data.products.length})…`);
-  const productByCode = new Map<string, { id: string; marketRate: number }>();
+  const DEMO_BROKERAGE = 200;
+  const productByCode = new Map<string, string>();
   for (const p of data.products) {
     const row = await prisma.product.upsert({
       where: { companyId_code: { companyId: company.id, code: p.code } },
-      update: { name: p.name, marketRate: p.marketRate, unit: p.unit, marketRateUpdatedAt: new Date() },
-      create: { companyId: company.id, code: p.code, name: p.name, unit: p.unit || 'MT', marketRate: p.marketRate, marketRateUpdatedAt: new Date() },
+      update: { name: p.name, unit: p.unit },
+      create: {
+        companyId: company.id, code: p.code, name: p.name, unit: p.unit || 'MT', brokerage: DEMO_BROKERAGE,
+        isDegum: p.code.trim().toUpperCase() === 'CDSBO', // CDSBO deals are degum by default
+      },
     });
-    productByCode.set(p.code.toLowerCase(), { id: row.id, marketRate: num(row.marketRate) });
+    productByCode.set(p.code.toLowerCase(), row.id);
   }
   const resolveProduct = async (code?: string | null) => {
     if (!code) return null;
     const hit = productByCode.get(code.toLowerCase());
     if (hit) return hit;
     const row = await prisma.product.create({
-      data: { companyId: company.id, code, name: code, unit: 'MT', marketRate: 0 },
+      data: { companyId: company.id, code, name: code, unit: 'MT', brokerage: DEMO_BROKERAGE, isDegum: code.trim().toUpperCase() === 'CDSBO' },
     });
-    const v = { id: row.id, marketRate: 0 };
-    productByCode.set(code.toLowerCase(), v);
-    return v;
+    productByCode.set(code.toLowerCase(), row.id);
+    return row.id;
   };
 
   // ── Parties (master + any referenced by deals) ──────────────────────────────
@@ -163,7 +165,7 @@ async function main() {
     const row = await prisma.party.upsert({
       where: { companyId_name: { companyId: company.id, name: p.name } },
       update: {},
-      create: { companyId: company.id, name: p.name, type: p.type as any, city: p.city, phone: p.phone, notes: p.notes },
+      create: { companyId: company.id, name: p.name, type: p.type as any, city: p.city, phones: p.phone ? [p.phone] : [], notes: p.notes },
     });
     partyByName.set(p.name.toLowerCase(), row.id);
   }
@@ -178,66 +180,52 @@ async function main() {
     return row.id;
   };
 
-  // ── Self firm (the mandatory second party on every deal) ────────────────────
-  console.log('▶ Self firm…');
-  const selfFirm = await prisma.party.upsert({
+  // ── Deals ───────────────────────────────────────────────────────────────────
+  // The workbook rows are one-sided (a party + our side), so the demo pairs each
+  // with our own firm as the other party — the same mapping the migration used.
+  const ownFirm = await prisma.party.upsert({
     where: { companyId_name: { companyId: company.id, name: 'Ojas Trading (Self)' } },
     update: { isSelf: true },
     create: { companyId: company.id, name: 'Ojas Trading (Self)', type: 'BOTH', isSelf: true, city: 'Kandla' },
   });
-
-  // ── Deals (Direct + Degum) ──────────────────────────────────────────────────
-  const existingDeals = await prisma.directDeal.count({ where: { companyId: company.id } });
+  const existingDeals = await prisma.deal.count({ where: { companyId: company.id } });
   if (existingDeals === 0) {
-    console.log(`▶ Direct Deals (${data.direct.length})…`);
-    for (const d of data.direct) {
-      const prod = await resolveProduct(d.material);
-      const qty = num(d.quantity), rate = num(d.rate), marketRate = num(d.marketRate), brk = num(d.brokerageRate);
-      await prisma.directDeal.create({
+    const rows = [
+      ...data.direct.map((d) => ({
+        dealNo: d.dealNo, date: dOrNull(d.date), material: d.material,
+        party: d.party, weSell: d.side === 'SELL', qty: num(d.quantity), rate: num(d.rate),
+        port: null as string | null, shipmentMonth: null as string | null, dueDate: dOrNull(d.dueDate),
+        vessel: null as string | null,
+      })),
+      ...data.degum.map((d) => ({
+        dealNo: d.dealNo, date: dOrNull(d.dealDate), material: d.material,
+        party: d.seller ?? d.buyer, weSell: false, qty: num(d.quantity), rate: num(d.buyRate),
+        port: d.originPort ?? null, shipmentMonth: d.shipmentMonth ?? null, dueDate: dOrNull(d.paymentDueDate),
+        vessel: (d.vessel as string | null) ?? null,
+      })),
+    ];
+    console.log(`▶ Deals (${rows.length})…`);
+    const half = DEMO_BROKERAGE / 2;
+    for (const d of rows) {
+      const partyId = await resolveParty(d.party);
+      const deal = await prisma.deal.create({
         data: {
-          companyId: company.id, dealNo: d.dealNo, date: dOrNull(d.date) ?? new Date(),
-          side: d.side, mainPartyId: await resolveParty(d.party), selfPartyId: selfFirm.id,
-          productId: prod?.id ?? null,
-          quantity: qty, rate, value: r4(qty * rate), marketRate, mtm: r4((marketRate - rate) * qty),
-          brokerageRate: brk, brokerageTotal: r4(qty * brk),
-          dueDate: dOrNull(d.dueDate), paymentStatus: d.paymentStatus, tankerNo: d.tankerNo,
-          status: d.status, remarks: d.remarks,
+          companyId: company.id, dealNo: d.dealNo, date: d.date ?? new Date(),
+          buyerPartyId: d.weSell ? partyId : ownFirm.id,
+          sellerPartyId: d.weSell ? ownFirm.id : partyId,
+          productId: await resolveProduct(d.material),
+          quantity: d.qty, rate: d.rate,
+          buyerBrokerage: half, sellerBrokerage: half, brokerageTotal: r4(d.qty * DEMO_BROKERAGE),
+          port: d.port, shipmentMonth: d.shipmentMonth, dueDate: d.dueDate,
           createdById: admin.id,
         },
       });
+      if (d.vessel) {
+        await prisma.degumDetail.create({
+          data: { companyId: company.id, dealId: deal.id, vesselName: d.vessel, createdById: admin.id },
+        });
+      }
     }
-
-    console.log(`▶ Degum Deals (${data.degum.length})…`);
-    for (const d of data.degum) {
-      const prod = await resolveProduct(d.material);
-      const qty = num(d.quantity), buyRate = num(d.buyRate), sellRate = num(d.sellRate), brk = num(d.brokerageRate);
-      const buyValue = r4(qty * buyRate), sellValue = r4(qty * sellRate);
-      // Main party = the principal counterparty (seller preferred, else buyer).
-      await prisma.degumDeal.create({
-        data: {
-          companyId: company.id, dealNo: d.dealNo, dealDate: dOrNull(d.dealDate),
-          productId: prod?.id ?? null, shipmentMonth: d.shipmentMonth, originPort: d.originPort,
-          mainPartyId: await resolveParty(d.seller ?? d.buyer), selfPartyId: selfFirm.id,
-          quantity: qty, buyRate, sellRate, buyValue, sellValue, grossMargin: r4(sellValue - buyValue),
-          brokerageRate: brk, brokerageTotal: r4(qty * brk),
-          shipNameReceived: !!d.shipNameReceived, vessel: d.vessel,
-          paymentDueDate: dOrNull(d.paymentDueDate), paymentStatus: d.paymentStatus, status: d.status,
-          remarks: d.remarks, createdById: admin.id,
-        },
-      });
-    }
-
-    // advance number sequences past seeded deal numbers
-    await prisma.numberSequence.upsert({
-      where: { companyId_key: { companyId: company.id, key: 'DIRECT' } },
-      update: { nextValue: data.direct.length + 1 },
-      create: { companyId: company.id, key: 'DIRECT', prefix: 'DD', padding: 3, resetYearly: false, nextValue: data.direct.length + 1 },
-    });
-    await prisma.numberSequence.upsert({
-      where: { companyId_key: { companyId: company.id, key: 'DEGUM' } },
-      update: { nextValue: data.degum.length + 1 },
-      create: { companyId: company.id, key: 'DEGUM', prefix: 'DG', padding: 3, resetYearly: false, nextValue: data.degum.length + 1 },
-    });
   } else {
     console.log('▶ Deals already present — skipping deal seed.');
   }

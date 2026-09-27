@@ -9,6 +9,9 @@ import { RequestUser } from '../common/types/request-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePartyDto, UpdatePartyDto } from './dto/party.dto';
 
+/** Trim, drop blanks and de-duplicate a phone list. */
+const cleanPhones = (phones?: string[]) => [...new Set((phones ?? []).map((p) => p.trim()).filter(Boolean))];
+
 export interface Ctx {
   ipAddress?: string | null;
   userAgent?: string | null;
@@ -33,7 +36,7 @@ export class PartiesService {
         { name: { contains: q.search, mode: 'insensitive' } },
         { code: { contains: q.search, mode: 'insensitive' } },
         { city: { contains: q.search, mode: 'insensitive' } },
-        { phone: { contains: q.search, mode: 'insensitive' } },
+        { phones: { has: q.search.trim() } },
         { gstin: { contains: q.search, mode: 'insensitive' } },
       ];
     }
@@ -66,7 +69,7 @@ export class PartiesService {
         type: dto.type ?? 'BOTH',
         isSelf: dto.isSelf ?? false,
         contactPerson: dto.contactPerson,
-        phone: dto.phone,
+        phones: cleanPhones(dto.phones),
         email: dto.email,
         address: dto.address,
         city: dto.city,
@@ -88,7 +91,10 @@ export class PartiesService {
 
   async update(user: RequestUser, id: string, dto: UpdatePartyDto, ctx: Ctx) {
     const before = await this.get(user, id);
-    const row = await this.prisma.party.update({ where: { id }, data: { ...dto } });
+    const row = await this.prisma.party.update({
+      where: { id },
+      data: { ...dto, phones: dto.phones ? cleanPhones(dto.phones) : undefined },
+    });
     await this.audit.record({
       companyId: user.companyId,
       actorId: user.id,

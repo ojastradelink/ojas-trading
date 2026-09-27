@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateProductDto {
   @ApiProperty({ example: 'CDSBO' })
@@ -18,20 +18,20 @@ export class CreateProductDto {
   @IsString()
   unit?: string;
 
-  @ApiPropertyOptional({ description: 'Current market rate ₹/MT' })
+  @ApiPropertyOptional({ description: 'Total brokerage ₹/MT — split equally between buyer & seller on a new deal' })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  marketRate?: number;
+  @Min(0)
+  brokerage?: number;
+
+  @ApiPropertyOptional({ description: 'Degum material — its deals are tracked in the Degum section' })
+  @IsOptional()
+  @IsBoolean()
+  isDegum?: boolean;
 
   @ApiPropertyOptional() @IsOptional() @IsString() notes?: string;
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
 
-export class UpdateMarketRateDto {
-  @ApiProperty({ description: 'New market rate ₹/MT — recalculates MTM everywhere' })
-  @Type(() => Number)
-  @IsNumber()
-  marketRate!: number;
-}

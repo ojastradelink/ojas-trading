@@ -38,6 +38,8 @@ export function Combobox({
   const boxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setLabel(selectedLabel ?? ''), [selectedLabel]);
+  // A value cleared from outside (e.g. a dependent field reset) clears the label too.
+  useEffect(() => { if (!value) setLabel(''); }, [value]);
 
   // debounce the search term
   useEffect(() => {

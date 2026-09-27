@@ -2,237 +2,237 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
-import { Activity, Boxes, Building2, IndianRupee, TrendingUp } from 'lucide-react';
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { ArrowUpRight } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useMemo, useState } from 'react';
 import { DataTable } from '@/components/data-table';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Combobox } from '@/components/ui/combobox';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
 import { apiGet } from '@/lib/api';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format';
 
 interface Holding {
-  productId: string; code: string; name: string;
-  bought: number; sold: number; netQty: number;
-  avgBuyRate: number; avgSellRate: number;
-  buyValue: number; sellValue: number;
-  marketRate: number; costValue: number; marketValue: number;
-  unrealisedPnl: number; realisedPnl: number;
+  id: string; dealNo: string; date: string; selfFirm: string; supplier: string;
+  product: { code: string; name: string } | null;
+  quantity: number; sold: number; inHand: number; rate: number;
+  dueDate: string | null; liftingDate: string | null; daysLeft: number | null;
+  sales: { dealNo: string; quantity: number }[];
 }
-interface Procurement {
-  productId: string; code: string; name: string;
-  sellerId: string | null; seller: string;
-  qty: number; avgRate: number; value: number; deals: number; lastDate: string | null;
+interface Sale {
+  id: string; dealNo: string; date: string; selfFirm: string; buyer: string;
+  product: { code: string; name: string } | null;
+  quantity: number; rate: number; dueDate: string | null; liftingDate: string | null; daysLeft: number | null;
+  sourceDeal: { id: string; dealNo: string } | null;
 }
-interface Summary { commodities: number; netQty: number; costValue: number; marketValue: number; unrealisedPnl: number }
-interface Resp { selfParties: { id: string; name: string }[]; summary: Summary; holdings: Holding[]; procurement: Procurement[] }
-
-const rate = (n: number) => `₹${formatNumber(n, 2)}`;
-const pnlClass = (n: number) => (n > 0 ? 'text-green-600 font-medium' : n < 0 ? 'text-destructive font-medium' : '');
-
-function StatCard({ label, value, icon: Icon, tone }: { label: string; value: string; icon: React.ComponentType<{ className?: string }>; tone?: 'pos' | 'neg' }) {
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-between p-4">
-        <div>
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <p className={`mt-1 text-2xl font-semibold tracking-tight ${tone === 'pos' ? 'text-green-600' : tone === 'neg' ? 'text-destructive' : ''}`}>{value}</p>
-        </div>
-        <div className="flex size-10 items-center justify-center rounded-lg bg-secondary text-primary"><Icon className="size-5" /></div>
-      </CardContent>
-    </Card>
-  );
+interface Desk {
+  selfFirms: { id: string; name: string }[];
+  summary: { selfFirm: string; code: string; name: string; bought: number; sold: number; inHand: number }[];
+  holdings: Holding[];
+  sales: Sale[];
 }
 
-const holdingCols: ColumnDef<Holding, any>[] = [
-  { id: 'code', header: 'Commodity', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.code}</span> },
-  { id: 'name', header: 'Name', accessorKey: 'name', enableSorting: false, cell: ({ row }) => <span className="text-muted-foreground">{row.original.name}</span> },
-  { id: 'bought', header: 'Bought (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.bought, 3) },
-  { id: 'sold', header: 'Sold (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.sold, 3) },
-  { id: 'net', header: 'Net (MT)', enableSorting: false, cell: ({ row }) => <span className={pnlClass(row.original.netQty)}>{formatNumber(row.original.netQty, 3)}</span> },
-  { id: 'avgBuy', header: 'Avg Buy Cost', enableSorting: false, cell: ({ row }) => rate(row.original.avgBuyRate) },
-  { id: 'market', header: 'Market Rate', enableSorting: false, cell: ({ row }) => rate(row.original.marketRate) },
-  { id: 'costValue', header: 'Cost Value', enableSorting: false, cell: ({ row }) => formatCurrency(row.original.costValue) },
-  { id: 'marketValue', header: 'Market Value', enableSorting: false, cell: ({ row }) => formatCurrency(row.original.marketValue) },
-  { id: 'unrealised', header: 'Unrealised P&L', enableSorting: false, cell: ({ row }) => <span className={pnlClass(row.original.unrealisedPnl)}>{formatCurrency(row.original.unrealisedPnl)}</span> },
+/** Lifting-due colour: red under 5 days (or overdue), yellow 5–15 days, green beyond 15. */
+function dueTone(daysLeft: number | null): { color: string; label: string } {
+  if (daysLeft == null) return { color: '#94a3b8', label: 'No lifting date' };
+  if (daysLeft < 5) {
+    return { color: '#ef4444', label: daysLeft < 0 ? `Overdue ${-daysLeft}d` : daysLeft === 0 ? 'Due today' : `${daysLeft} days` };
+  }
+  if (daysLeft <= 15) return { color: '#f59e0b', label: `${daysLeft} days` };
+  return { color: '#22c55e', label: `${daysLeft} days` };
+}
+
+const LEGEND = [
+  { color: '#ef4444', label: 'Less than 5 days' },
+  { color: '#f59e0b', label: '5 – 15 days' },
+  { color: '#22c55e', label: 'Above 15 days' },
+  { color: '#94a3b8', label: 'No lifting date' },
 ];
 
-const procCols: ColumnDef<Procurement, any>[] = [
-  { id: 'code', header: 'Commodity', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.code}</span> },
-  { id: 'seller', header: 'Seller', accessorKey: 'seller', enableSorting: false },
-  { id: 'qty', header: 'Qty Bought (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.qty, 3) },
-  { id: 'avgRate', header: 'Avg Rate ₹/MT', enableSorting: false, cell: ({ row }) => rate(row.original.avgRate) },
-  { id: 'value', header: 'Value', enableSorting: false, cell: ({ row }) => formatCurrency(row.original.value) },
-  { id: 'deals', header: 'Deals', enableSorting: false, cell: ({ row }) => row.original.deals },
-  { id: 'lastDate', header: 'Last Buy', enableSorting: false, cell: ({ row }) => formatDate(row.original.lastDate) },
-];
-
-function FeasibilityChecker({ holdings, procurement }: { holdings: Holding[]; procurement: Procurement[] }) {
-  const [code, setCode] = useState('');
-  const [qty, setQty] = useState('');
-  const [sellRate, setSellRate] = useState('');
-  const [brokerage, setBrokerage] = useState('');
-
-  const sel = holdings.find((h) => h.code === code);
-  // default the sell rate to the market rate when a commodity is picked
-  useEffect(() => { if (sel) setSellRate((r) => (r === '' ? String(sel.marketRate || '') : r)); }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const result = useMemo(() => {
-    if (!sel) return null;
-    const q = Number(qty) || 0;
-    const r = Number(sellRate) || 0;
-    const brk = Number(brokerage) || 0;
-    const available = sel.netQty;
-    const avgCost = sel.avgBuyRate;
-    // Brokerage is income we charge, so it adds to our margin (not a cost we deduct).
-    const marginPerMt = r - avgCost + brk;
-    const totalMargin = q * marginPerMt;
-    const enoughStock = available > 0 && q > 0 && q <= available;
-    const shortfall = Math.max(0, q - Math.max(0, available));
-    const profitable = marginPerMt > 0;
-    const vsMarket = r - sel.marketRate;
-    return { q, r, brk, available, avgCost, marginPerMt, totalMargin, enoughStock, shortfall, profitable, vsMarket, market: sel.marketRate };
-  }, [sel, qty, sellRate, brokerage]);
-
-  const sources = procurement.filter((p) => sel && p.productId === sel.productId);
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2"><TrendingUp className="size-4" /> Feasibility Check</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-muted-foreground">Pick a commodity and a prospective sale to test margin against your weighted-average cost and on-hand stock.</p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="space-y-1">
-            <Label className="text-xs">Commodity</Label>
-            <Select value={code} onChange={(e) => { setCode(e.target.value); setSellRate(''); }}>
-              <option value="">Select…</option>
-              {holdings.map((h) => <option key={h.productId} value={h.code}>{h.code} — net {formatNumber(h.netQty, 1)} MT</option>)}
-            </Select>
-          </div>
-          <div className="space-y-1"><Label className="text-xs">Sell Qty (MT)</Label><Input type="number" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
-          <div className="space-y-1"><Label className="text-xs">Sell Rate (₹/MT)</Label><Input type="number" value={sellRate} onChange={(e) => setSellRate(e.target.value)} /></div>
-          <div className="space-y-1"><Label className="text-xs">Brokerage (₹/MT)</Label><Input type="number" value={brokerage} onChange={(e) => setBrokerage(e.target.value)} /></div>
-        </div>
-
-        {!sel ? (
-          <p className="text-sm text-muted-foreground">Select a commodity to begin.</p>
-        ) : (
+/** Colour bar at the row's left edge (by lifting due date), shared by both tables. */
+function dueColumns<T extends { daysLeft: number | null }>(): ColumnDef<T, any>[] {
+  return [
+    {
+      id: '_due', header: '', enableSorting: false,
+      meta: { cellClassName: 'relative p-0', headerClassName: 'p-0' },
+      cell: ({ row }) => {
+        const t = dueTone(row.original.daysLeft);
+        return (
           <>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Metric label="Available (Net)" value={`${formatNumber(result!.available, 3)} MT`} tone={result!.available < 0 ? 'neg' : undefined} />
-              <Metric label="Avg Buy Cost" value={rate(result!.avgCost)} />
-              <Metric label="Market Rate" value={rate(result!.market)} />
-              <Metric label="Margin / MT" value={rate(result!.marginPerMt)} tone={result!.marginPerMt >= 0 ? 'pos' : 'neg'} />
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Metric label="Projected Total Margin" value={formatCurrency(result!.totalMargin)} tone={result!.totalMargin >= 0 ? 'pos' : 'neg'} big />
-              <Metric label="Sell Rate vs Market" value={`${result!.vsMarket >= 0 ? '+' : ''}${rate(result!.vsMarket)}`} tone={result!.vsMarket >= 0 ? 'pos' : 'neg'} big />
-            </div>
-
-            {result!.q > 0 && (
-              <div className={`rounded-md border p-3 text-sm ${result!.enoughStock && result!.profitable ? 'border-green-600/40 bg-green-600/5' : 'border-amber-500/40 bg-amber-500/5'}`}>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge color={result!.enoughStock && result!.profitable ? '#22c55e' : '#f59e0b'}>
-                    {result!.enoughStock && result!.profitable ? 'FEASIBLE' : 'REVIEW'}
-                  </Badge>
-                  <span>
-                    {result!.profitable ? `Profitable at ${rate(result!.marginPerMt)}/MT` : `Loss of ${rate(Math.abs(result!.marginPerMt))}/MT vs cost`}
-                    {' · '}
-                    {result!.enoughStock
-                      ? `${formatNumber(result!.available, 1)} MT on hand covers it`
-                      : result!.shortfall > 0
-                        ? `Short ${formatNumber(result!.shortfall, 1)} MT — would need fresh procurement`
-                        : 'No stock on hand'}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {sources.length > 0 && (
-              <div>
-                <p className="mb-1 text-xs font-semibold uppercase text-muted-foreground">Sourced from</p>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {sources.map((s) => (
-                    <span key={s.sellerId ?? s.seller} className="rounded-md border border-border px-2 py-1">
-                      {s.seller}: <b>{formatNumber(s.qty, 1)} MT</b> @ {rate(s.avgRate)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+            <span title={t.label} className="absolute inset-y-0 left-0 w-2" style={{ background: t.color }} />
+            <span className="block w-5" aria-hidden />
           </>
-        )}
-      </CardContent>
-    </Card>
-  );
+        );
+      },
+    },
+  ];
 }
+const dueDateCells = <T extends { daysLeft: number | null; dueDate: string | null; liftingDate: string | null }>(): ColumnDef<T, any>[] => [
+  { id: 'liftingDate', header: 'Lifting Due', enableSorting: false, cell: ({ row }) => formatDate(row.original.liftingDate) },
+  {
+    id: 'liftingIn', header: 'Lifting In', enableSorting: false,
+    cell: ({ row }) => { const t = dueTone(row.original.daysLeft); return <Badge color={t.color}>{t.label}</Badge>; },
+  },
+  { id: 'dueDate', header: 'Payment Due', enableSorting: false, cell: ({ row }) => formatDate(row.original.dueDate) },
+];
 
-function Metric({ label, value, tone, big }: { label: string; value: string; tone?: 'pos' | 'neg'; big?: boolean }) {
-  return (
-    <div className="rounded-md border border-border p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`mt-0.5 font-semibold ${big ? 'text-xl' : 'text-base'} ${tone === 'pos' ? 'text-green-600' : tone === 'neg' ? 'text-destructive' : ''}`}>{value}</p>
-    </div>
-  );
-}
+export default function TradingDeskPage() {
+  const router = useRouter();
+  const [selfPartyId, setSelfPartyId] = useState('');
+  const [productId, setProductId] = useState('');
+  const [productLabel, setProductLabel] = useState('');
+  const [showSoldOut, setShowSoldOut] = useState(false);
 
-export default function TradingPage() {
-  const q = useQuery({ queryKey: ['trading-desk'], queryFn: () => apiGet<Resp>('/trading-desk') });
-  const data = q.data;
+  const desk = useQuery({
+    queryKey: ['trading-desk', selfPartyId, productId, showSoldOut],
+    queryFn: () => apiGet<Desk>('/trading-desk', {
+      selfPartyId: selfPartyId || undefined,
+      productId: productId || undefined,
+      showSoldOut: showSoldOut ? 'true' : undefined,
+    }),
+  });
+  const d = desk.data;
+
+  const holdingCols = useMemo<ColumnDef<Holding, any>[]>(() => [
+    ...dueColumns<Holding>(),
+    { id: 'dealNo', header: 'Deal', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.dealNo}</span> },
+    { id: 'date', header: 'Date', enableSorting: false, cell: ({ row }) => formatDate(row.original.date) },
+    { id: 'selfFirm', header: 'Own Firm', accessorKey: 'selfFirm', enableSorting: false },
+    { id: 'supplier', header: 'Bought From', accessorKey: 'supplier', enableSorting: false },
+    { id: 'product', header: 'Material', enableSorting: false, cell: ({ row }) => row.original.product?.code ?? '—' },
+    { id: 'quantity', header: 'Bought (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.quantity, 3) },
+    { id: 'sold', header: 'Sold (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.sold, 3) },
+    {
+      id: 'inHand', header: 'In Hand (MT)', enableSorting: false,
+      cell: ({ row }) => <span className={`font-semibold ${row.original.inHand > 0 ? '' : 'text-muted-foreground'}`}>{formatNumber(row.original.inHand, 3)}</span>,
+    },
+    { id: 'rate', header: 'Rate', enableSorting: false, cell: ({ row }) => formatCurrency(row.original.rate) },
+    ...dueDateCells<Holding>(),
+    {
+      id: 'soldTo', header: 'Sold In', enableSorting: false,
+      cell: ({ row }) => row.original.sales.length
+        ? row.original.sales.map((s) => `${s.dealNo} (${formatNumber(s.quantity, 3)})`).join(', ')
+        : <span className="text-muted-foreground">—</span>,
+    },
+    {
+      id: '_sell', header: '', enableSorting: false,
+      cell: ({ row }) => row.original.inHand > 0 && (
+        <Button size="sm" variant="outline" onClick={() => router.push(`/deals?sellFrom=${row.original.id}`)}>
+          <ArrowUpRight className="size-4" /> Sell
+        </Button>
+      ),
+    },
+  ], [router]);
+
+  const saleCols = useMemo<ColumnDef<Sale, any>[]>(() => [
+    ...dueColumns<Sale>(),
+    { id: 'dealNo', header: 'Deal', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.dealNo}</span> },
+    { id: 'date', header: 'Date', enableSorting: false, cell: ({ row }) => formatDate(row.original.date) },
+    { id: 'selfFirm', header: 'Own Firm', accessorKey: 'selfFirm', enableSorting: false },
+    { id: 'buyer', header: 'Sold To', accessorKey: 'buyer', enableSorting: false },
+    { id: 'product', header: 'Material', enableSorting: false, cell: ({ row }) => row.original.product?.code ?? '—' },
+    { id: 'quantity', header: 'Qty (MT)', enableSorting: false, cell: ({ row }) => formatNumber(row.original.quantity, 3) },
+    { id: 'rate', header: 'Rate', enableSorting: false, cell: ({ row }) => formatCurrency(row.original.rate) },
+    {
+      id: 'source', header: 'Sold From', enableSorting: false,
+      cell: ({ row }) => row.original.sourceDeal
+        ? <span className="font-medium">{row.original.sourceDeal.dealNo}</span>
+        : <Badge color="#f59e0b" >Not linked</Badge>,
+    },
+    ...dueDateCells<Sale>(),
+  ], []);
+
+  const unlinked = (d?.sales ?? []).filter((s) => !s.sourceDeal).length;
 
   return (
     <div>
-      <PageHeader title="Trading Desk" description="Self-firm positions, procurement cost & deal feasibility" />
+      <PageHeader title="Trading Desk" description="Your own firm's trades — stock in hand and sales, coloured by lifting due date" />
 
-      {q.isLoading ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[76px]" />)}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        {(d?.selfFirms.length ?? 0) > 1 && (
+          <div className="w-52 space-y-1">
+            <Label className="text-xs">Own firm</Label>
+            <Select value={selfPartyId} onChange={(e) => setSelfPartyId(e.target.value)}>
+              <option value="">All own firms</option>
+              {d!.selfFirms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </Select>
+          </div>
+        )}
+        <div className="w-64 space-y-1">
+          <Label className="text-xs">Material</Label>
+          <Combobox
+            endpoint="/products"
+            value={productId}
+            selectedLabel={productLabel}
+            onChange={(id, it) => { setProductId(id); setProductLabel(`${it.code} — ${it.name}`); }}
+            mapLabel={(it) => `${it.code} — ${it.name}`}
+            placeholder="All materials"
+          />
         </div>
-      ) : data && data.selfParties.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <div className="flex size-12 items-center justify-center rounded-lg bg-secondary text-primary"><Building2 className="size-6" /></div>
-            <p className="font-medium">No Self Firm defined yet</p>
-            <p className="max-w-md text-sm text-muted-foreground">Mark one of your parties as a “Self Firm” (or create one) to track positions and check trade feasibility here.</p>
-            <Link href="/master/parties" className="text-sm font-medium text-primary hover:underline">Go to Parties →</Link>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <StatCard label="Commodities Held" value={formatNumber(data?.summary.commodities ?? 0, 0)} icon={Boxes} />
-            <StatCard label="Net On-Hand (MT)" value={formatNumber(data?.summary.netQty ?? 0, 1)} icon={TrendingUp} />
-            <StatCard label="Cost Value" value={formatCurrency(data?.summary.costValue ?? 0)} icon={IndianRupee} />
-            <StatCard label="Market Value" value={formatCurrency(data?.summary.marketValue ?? 0)} icon={Activity} />
-            <StatCard label="Unrealised P&L" value={formatCurrency(data?.summary.unrealisedPnl ?? 0)} icon={Activity} tone={(data?.summary.unrealisedPnl ?? 0) >= 0 ? 'pos' : 'neg'} />
-          </div>
+        {productId && (
+          <Button variant="ghost" size="sm" onClick={() => { setProductId(''); setProductLabel(''); }}>Clear material</Button>
+        )}
+        <label className="flex h-9 items-center gap-2 text-sm">
+          <input type="checkbox" className="size-4" checked={showSoldOut} onChange={(e) => setShowSoldOut(e.target.checked)} />
+          Show sold-out purchases
+        </label>
+        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+          <span className="font-medium">Lifting due:</span>
+          {LEGEND.map((c) => (
+            <span key={c.label} className="inline-flex items-center gap-1.5">
+              <span className="inline-block h-3 w-3.5 rounded-sm" style={{ background: c.color }} />
+              {c.label}
+            </span>
+          ))}
+        </div>
+      </div>
 
-          <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Self firm(s):</span>
-            {(data?.selfParties ?? []).map((p) => <Badge key={p.id} color="#22c55e">{p.name}</Badge>)}
-          </div>
-
-          <FeasibilityChecker holdings={data?.holdings ?? []} procurement={data?.procurement ?? []} />
-
-          <div>
-            <h2 className="mb-2 text-sm font-semibold">Net Position — Cost vs Market</h2>
-            <DataTable columns={holdingCols} data={data?.holdings ?? []} isLoading={q.isLoading} storageKey="trading-holdings" />
-          </div>
-
-          <div>
-            <h2 className="mb-2 text-sm font-semibold">Procurement — what we hold, from which seller, at what rate</h2>
-            <DataTable columns={procCols} data={data?.procurement ?? []} isLoading={q.isLoading} storageKey="trading-procurement" />
-          </div>
+      {d && d.selfFirms.length === 0 && (
+        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          No own firm yet — mark a party as your own firm (Self) in Parties, then its trades appear here.
         </div>
       )}
+
+      {/* In hand per material */}
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {(d?.summary ?? []).filter((m) => m.inHand > 0).map((m) => (
+          <Card key={`${m.selfFirm}-${m.code}`}>
+            <CardContent className="p-4">
+              <p className="text-xs font-medium text-muted-foreground">{m.code} · {m.selfFirm}</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight">{formatNumber(m.inHand, 3)} MT</p>
+              <p className="text-xs text-muted-foreground">in hand · bought {formatNumber(m.bought, 3)} · sold {formatNumber(m.sold, 3)}</p>
+            </CardContent>
+          </Card>
+        ))}
+        {d && !d.summary.some((m) => m.inHand > 0) && (
+          <p className="text-sm text-muted-foreground sm:col-span-2">Nothing in hand right now.</p>
+        )}
+      </div>
+
+      <Card className="mb-4">
+        <CardHeader><CardTitle>Stock in Hand — Purchases</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          <DataTable columns={holdingCols} data={d?.holdings ?? []} isLoading={desk.isLoading} storageKey="trading-holdings" />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Sales</CardTitle>
+          {unlinked > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {unlinked} older sale{unlinked === 1 ? ' is' : 's are'} not linked to a purchase — edit {unlinked === 1 ? 'it' : 'them'} in Deals and pick “Selling From” so stock in hand is exact.
+            </p>
+          )}
+        </CardHeader>
+        <CardContent className="p-0">
+          <DataTable columns={saleCols} data={d?.sales ?? []} isLoading={desk.isLoading} storageKey="trading-sales" />
+        </CardContent>
+      </Card>
     </div>
   );
 }

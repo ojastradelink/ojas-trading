@@ -22,18 +22,39 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Transparent refresh on 401 (single-flight)
+// Transparent refresh on 401 (single-flight per tab)
 let refreshing: Promise<string | null> | null = null;
+
+/** Tokens as persisted in storage — another tab may have rotated them since this tab loaded. */
+function storedTokens(): { accessToken: string; refreshToken: string } | null {
+  try {
+    const s = JSON.parse(window.localStorage.getItem('ojas-auth') ?? 'null')?.state;
+    return s?.accessToken && s?.refreshToken ? s : null;
+  } catch {
+    return null;
+  }
+}
 
 async function doRefresh(): Promise<string | null> {
   const { refreshToken, setTokens, clear } = useAuth.getState();
   if (!refreshToken) return null;
+  // Refresh tokens are single-use. If another tab already rotated ours, use its new pair.
+  const adoptNewer = () => {
+    const s = storedTokens();
+    if (!s || s.refreshToken === refreshToken) return null;
+    setTokens(s.accessToken, s.refreshToken);
+    return s.accessToken;
+  };
+  const newer = adoptNewer();
+  if (newer) return newer;
   try {
     const res = await axios.post(`${BASE_URL}/auth/refresh`, { refreshToken });
     const data = res.data?.data ?? res.data;
     setTokens(data.accessToken, data.refreshToken);
     return data.accessToken as string;
   } catch {
+    const raced = adoptNewer(); // lost a race with another tab's refresh
+    if (raced) return raced;
     clear();
     return null;
   }
@@ -49,7 +70,8 @@ api.interceptors.response.use(
       error.response?.status === 401 &&
       original &&
       !original._retry &&
-      !original.url?.includes('/auth/')
+      // /auth/me (checked on every page load) refreshes too; only the token endpoints don't.
+      !/\/auth\/(login|refresh|logout)/.test(original.url ?? '')
     ) {
       original._retry = true;
       refreshing = refreshing ?? doRefresh();

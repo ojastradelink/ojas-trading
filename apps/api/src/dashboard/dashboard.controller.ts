@@ -24,28 +24,22 @@ export class DashboardController {
     return this.dashboard.summary(user.companyId);
   }
 
-  @Get('product-exposure')
+  @Get('brokerage-by-material')
   @RequirePermissions('dashboard:read')
-  productExposure(@CurrentUser() user: RequestUser) {
-    return this.dashboard.productExposure(user.companyId);
+  brokerageByMaterial(@CurrentUser() user: RequestUser) {
+    return this.dashboard.brokerageByMaterial(user.companyId);
   }
 
-  @Get('daily-mtm')
+  @Get('monthly-brokerage')
   @RequirePermissions('dashboard:read')
-  dailyMtm(@CurrentUser() user: RequestUser) {
-    return this.dashboard.dailyMtm(user.companyId);
+  monthlyBrokerage(@CurrentUser() user: RequestUser) {
+    return this.dashboard.monthlyBrokerage(user.companyId);
   }
 
-  @Get('payment-status')
+  @Get('recent-deals')
   @RequirePermissions('dashboard:read')
-  paymentStatus(@CurrentUser() user: RequestUser) {
-    return this.dashboard.paymentStatus(user.companyId);
-  }
-
-  @Get('upcoming-due')
-  @RequirePermissions('dashboard:read')
-  upcomingDue(@CurrentUser() user: RequestUser) {
-    return this.dashboard.upcomingDue(user.companyId);
+  recentDeals(@CurrentUser() user: RequestUser) {
+    return this.dashboard.recentDeals(user.companyId);
   }
 
   @Get('recent-activity')

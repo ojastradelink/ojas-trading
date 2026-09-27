@@ -1,518 +1,372 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { buildPageMeta } from '../common/dto/pagination.dto';
 import { RequestUser } from '../common/types/request-user';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { Ctx, daysLeft, DealBaseService } from './deal-base.service';
-import {
-  parseWorkbook,
-  requiredHeaders,
-  resolveImportRows,
-  SPEC_DEGUM,
-  SPEC_DIRECT,
-} from './deals-io';
-import {
-  CreateDegumDealDto,
-  CreateDirectDealDto,
-  UpdateDegumDealDto,
-  UpdateDirectDealDto,
-} from './dto/deals.dto';
+import { StockService } from '../trading/stock.service';
+import { parseWorkbook, requiredHeaders, resolveImportRows, SPEC_DEAL } from './deals-io';
+import { CreateDealDto, DealQueryDto, UpdateDealDto } from './dto/deals.dto';
 
-const r4 = (n: number) => Number(n.toFixed(4));
-const r3 = (n: number) => Number(n.toFixed(3));
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  Module C — Direct Deals
-//   Two parties: Main party (external) + Self firm.
-//   Value = qty × rate; MTM = (marketRate − rate) × qty; Brokerage = qty × ₹/MT
-// ═══════════════════════════════════════════════════════════════════════════
-@Injectable()
-export class DirectDealService extends DealBaseService {
-  protected model = 'directDeal';
-  protected entityType = 'DirectDeal';
-  protected searchFields = ['dealNo', 'tankerNo', 'remarks'];
-  protected include = { mainParty: true, selfParty: true, buyerParty: true, sellerParty: true, product: true };
-  protected defaultOrderBy = { createdAt: 'desc' as const }; // latest created on top
-  protected dateField = 'date';
-  protected hasSide = true;
-  protected hasBrokerMode = true;
-  protected sortableFields = ['dealNo', 'date', 'side', 'quantity', 'rate', 'value', 'marketRate', 'mtm', 'brokerageRate', 'brokerageTotal', 'buyerBrokerageTotal', 'sellerBrokerageTotal', 'dueDate', 'paymentStatus', 'status', 'createdAt'];
-
-  constructor(prisma: PrismaService, audit: AuditService, numbering: NumberingService) {
-    super(prisma, audit, numbering);
-  }
-
-  protected decorate(row: any) {
-    return { ...row, daysLeft: daysLeft(row.dueDate) };
-  }
-
-  /**
-   * Net on-hand (MT) held by a Self firm for one commodity = Σ Direct BUY − Σ Direct SELL.
-   * (Degum is back-to-back — its buy leg is sold onward the same instant, so it holds nothing.)
-   */
-  private async netOnHand(
-    companyId: string,
-    selfPartyId: string,
-    productId: string,
-    excludeDealId?: string,
-    client: any = this.prisma,
-  ): Promise<number> {
-    const rows = await client.directDeal.findMany({
-      where: {
-        companyId,
-        deletedAt: null,
-        kind: 'PRINCIPAL', // broker deals hold no stock
-        selfPartyId,
-        productId,
-        ...(excludeDealId ? { id: { not: excludeDealId } } : {}),
-      },
-      select: { side: true, quantity: true },
-    });
-    return rows.reduce((n: number, r: any) => n + (r.side === 'BUY' ? 1 : -1) * Number(r.quantity), 0);
-  }
-
-  /**
-   * BROKERAGE deals: we only broker a trade between a distinct external buyer and
-   * seller — neither side may be a Self firm (the whole point is "no self firm").
-   */
-  private async assertBrokerParties(
-    companyId: string,
-    buyerPartyId: string | null | undefined,
-    sellerPartyId: string | null | undefined,
-  ) {
-    if (!buyerPartyId || !sellerPartyId) {
-      throw new BadRequestException('A broker deal needs both a buyer and a seller.');
-    }
-    if (buyerPartyId === sellerPartyId) {
-      throw new BadRequestException('A broker deal needs a distinct buyer and seller — they cannot be the same party.');
-    }
-    const parties = await this.prisma.party.findMany({
-      where: { companyId, id: { in: [buyerPartyId, sellerPartyId] } },
-      select: { id: true, isSelf: true },
-    });
-    if (parties.length < 2) throw new BadRequestException('Buyer or seller party not found.');
-    if (parties.some((p) => p.isSelf)) {
-      throw new BadRequestException("A broker deal's buyer and seller must be external parties, not a Self firm.");
-    }
-  }
-
-  /** Block a Self SELL that would exceed on-hand stock (no overselling / negative holdings). */
-  private async assertCanSell(
-    companyId: string,
-    selfPartyId: string | null | undefined,
-    productId: string | null | undefined,
-    qty: number,
-    excludeDealId?: string,
-  ) {
-    if (!selfPartyId || !productId) return; // can't assess stock without both — skip
-    const available = await this.netOnHand(companyId, selfPartyId, productId, excludeDealId);
-    if (qty > available + 1e-6) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: productId, companyId },
-        select: { code: true },
-      });
-      const code = product?.code ?? 'this commodity';
-      throw new BadRequestException(
-        `Cannot sell ${r3(qty)} MT of ${code} — only ${r3(available)} MT on hand for this self firm. ` +
-          `Record the purchase first, then sell.`,
-      );
-    }
-  }
-
-  async create(user: RequestUser, dto: CreateDirectDealDto, ctx: Ctx) {
-    const kind = dto.kind ?? 'PRINCIPAL';
-    const qty = dto.quantity;
-    const modeData =
-      kind === 'BROKERAGE'
-        ? await this.brokerData(user.companyId, qty, dto.buyerPartyId, dto.sellerPartyId, dto.buyerBrokerageRate ?? 0, dto.sellerBrokerageRate ?? 0)
-        : await this.principalData(user.companyId, qty, dto.rate, dto.side, dto.mainPartyId, dto.selfPartyId, dto.productId, dto.marketRate, dto.brokerageRate);
-    const row = await this.prisma.$transaction(async (tx) => {
-      const dealNo = await this.numbering.next(user.companyId, 'DIRECT', tx);
-      return tx.directDeal.create({
-        data: {
-          companyId: user.companyId,
-          dealNo,
-          date: dto.date ? new Date(dto.date) : new Date(),
-          kind,
-          productId: dto.productId ?? null,
-          quantity: qty,
-          rate: dto.rate,
-          dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-          paymentStatus: dto.paymentStatus ?? 'PENDING',
-          tankerNo: dto.tankerNo ?? null,
-          status: dto.status ?? 'OPEN',
-          remarks: dto.remarks ?? null,
-          createdById: user.id,
-          updatedById: user.id,
-          ...modeData,
-        },
-      });
-    });
-    await this.auditWrite(user, 'CREATE', row.id, `Created direct deal ${row.dealNo}`, ctx);
-    return this.get(user, row.id);
-  }
-
-  /**
-   * PRINCIPAL leg: Self firm buys/sells. Requires a side, blocks overselling on
-   * SELL, and computes value / MTM / single brokerage. Broker fields are zeroed.
-   */
-  private async principalData(
-    companyId: string,
-    qty: number,
-    rate: number,
-    side: CreateDirectDealDto['side'],
-    mainPartyId: string | null | undefined,
-    selfPartyId: string | null | undefined,
-    productId: string | null | undefined,
-    marketRateInput: number | null | undefined,
-    brokerageRateInput: number | null | undefined,
-    excludeDealId?: string,
-  ) {
-    if (!side) throw new BadRequestException('Side (Buy/Sell) is required for a principal direct deal.');
-    if (side === 'SELL') {
-      await this.assertCanSell(companyId, selfPartyId, productId, qty, excludeDealId);
-    }
-    const marketRate = marketRateInput ?? (await this.resolveMarketRate(companyId, productId ?? undefined));
-    const brokerageRate = brokerageRateInput ?? 0;
-    return {
-      side,
-      mainPartyId: mainPartyId ?? null,
-      selfPartyId: selfPartyId ?? null,
-      buyerPartyId: null,
-      sellerPartyId: null,
-      value: r4(qty * rate),
-      marketRate,
-      mtm: r4((marketRate - rate) * qty),
-      brokerageRate,
-      brokerageTotal: r4(qty * brokerageRate),
-      buyerBrokerageRate: 0,
-      buyerBrokerageTotal: 0,
-      sellerBrokerageRate: 0,
-      sellerBrokerageTotal: 0,
-    };
-  }
-
-  /**
-   * BROKERAGE leg: no Self firm — a distinct external buyer & seller, each charged
-   * its own per-ton brokerage. We hold nothing, so value / MTM / market rate are 0
-   * and brokerageTotal is the combined income (buyer + seller).
-   */
-  private async brokerData(
-    companyId: string,
-    qty: number,
-    buyerPartyId: string | null | undefined,
-    sellerPartyId: string | null | undefined,
-    buyerBrokerageRate: number,
-    sellerBrokerageRate: number,
-  ) {
-    await this.assertBrokerParties(companyId, buyerPartyId, sellerPartyId);
-    const buyerBrokerageTotal = r4(qty * buyerBrokerageRate);
-    const sellerBrokerageTotal = r4(qty * sellerBrokerageRate);
-    return {
-      side: null,
-      mainPartyId: null,
-      selfPartyId: null,
-      buyerPartyId: buyerPartyId ?? null,
-      sellerPartyId: sellerPartyId ?? null,
-      value: 0,
-      marketRate: 0,
-      mtm: 0,
-      brokerageRate: 0,
-      brokerageTotal: r4(buyerBrokerageTotal + sellerBrokerageTotal),
-      buyerBrokerageRate,
-      buyerBrokerageTotal,
-      sellerBrokerageRate,
-      sellerBrokerageTotal,
-    };
-  }
-
-  async update(user: RequestUser, id: string, dto: UpdateDirectDealDto, ctx: Ctx) {
-    const before = await this.get(user, id);
-    const kind = dto.kind ?? before.kind;
-    const qty = dto.quantity ?? Number(before.quantity);
-    const rate = dto.rate ?? Number(before.rate);
-    // Recompute all mode-specific fields for the resulting kind (excludes this
-    // deal from the on-hand tally so an edit-in-place doesn't fail the guard).
-    const modeData =
-      kind === 'BROKERAGE'
-        ? await this.brokerData(
-            user.companyId,
-            qty,
-            dto.buyerPartyId ?? before.buyerPartyId,
-            dto.sellerPartyId ?? before.sellerPartyId,
-            dto.buyerBrokerageRate ?? Number(before.buyerBrokerageRate),
-            dto.sellerBrokerageRate ?? Number(before.sellerBrokerageRate),
-          )
-        : await this.principalData(
-            user.companyId,
-            qty,
-            rate,
-            dto.side ?? before.side,
-            dto.mainPartyId ?? before.mainPartyId,
-            dto.selfPartyId ?? before.selfPartyId,
-            dto.productId ?? before.productId,
-            dto.marketRate ?? Number(before.marketRate),
-            dto.brokerageRate ?? Number(before.brokerageRate),
-            id,
-          );
-    const row = await this.prisma.directDeal.update({
-      where: { id },
-      data: {
-        kind,
-        date: dto.date ? new Date(dto.date) : undefined,
-        productId: dto.productId ?? undefined,
-        quantity: qty,
-        rate,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-        paymentStatus: dto.paymentStatus ?? undefined,
-        tankerNo: dto.tankerNo ?? undefined,
-        status: dto.status ?? undefined,
-        remarks: dto.remarks ?? undefined,
-        updatedById: user.id,
-        ...modeData,
-      },
-    });
-    await this.auditWrite(user, 'UPDATE', id, `Updated direct deal ${before.dealNo}`, ctx, AuditService.diff(before, row));
-    return this.get(user, id);
-  }
-
-  /**
-   * Bulk-create Direct deals from a parsed spreadsheet. All-or-nothing:
-   * the whole file is validated first, then inserted in ONE transaction that
-   * honours every rule (numbering, computed rollups, and the overselling guard
-   * evaluated against running on-hand within the transaction). Any error →
-   * nothing is imported.
-   */
-  async importFile(user: RequestUser, buffer: Buffer | undefined, ctx: Ctx) {
-    if (!buffer || !buffer.length) throw new BadRequestException('No file uploaded.');
-    const { headers, rows } = parseWorkbook(buffer);
-    if (!rows.length) throw new BadRequestException('The file has no data rows.');
-    const missing = requiredHeaders('direct').filter(
-      (h) => !headers.some((x) => x.trim().toLowerCase() === h.toLowerCase()),
-    );
-    if (missing.length) throw new BadRequestException(`Missing required column(s): ${missing.join(', ')}`);
-
-    const lk = await this.buildImportLookups(user.companyId);
-    const { records, errors } = resolveImportRows(SPEC_DIRECT, headers, rows, lk);
-    if (errors.length) {
-      throw new BadRequestException({ message: `Import failed — ${errors.length} problem(s) found. Nothing was imported.`, errors });
-    }
-
-    const created = await this.prisma.$transaction(async (tx) => {
-      const ids: string[] = [];
-      for (let i = 0; i < records.length; i++) {
-        const rec = records[i];
-        const rowNo = i + 2;
-        const quantity = Number(rec.quantity);
-        const rate = Number(rec.rate);
-        const marketRate = rec.marketRate != null ? Number(rec.marketRate) : await this.resolveMarketRate(user.companyId, rec.productId);
-        const brokerageRate = rec.brokerageRate != null ? Number(rec.brokerageRate) : 0;
-        if (rec.side === 'SELL') {
-          const avail = await this.netOnHand(user.companyId, rec.selfPartyId, rec.productId, undefined, tx);
-          if (quantity > avail + 1e-6) {
-            const code = lk.productCodeById.get(rec.productId) ?? 'this commodity';
-            throw new BadRequestException(
-              `Row ${rowNo}: cannot sell ${r3(quantity)} MT of ${code} — only ${r3(avail)} MT on hand at this point in the file. Nothing was imported.`,
-            );
-          }
-        }
-        const dealNo = await this.numbering.next(user.companyId, 'DIRECT', tx);
-        const row = await tx.directDeal.create({
-          data: {
-            companyId: user.companyId,
-            dealNo,
-            date: rec.date ? new Date(rec.date) : new Date(),
-            side: rec.side,
-            mainPartyId: rec.mainPartyId ?? null,
-            selfPartyId: rec.selfPartyId ?? null,
-            productId: rec.productId ?? null,
-            quantity,
-            rate,
-            value: r4(quantity * rate),
-            marketRate,
-            mtm: r4((marketRate - rate) * quantity),
-            brokerageRate,
-            brokerageTotal: r4(quantity * brokerageRate),
-            dueDate: rec.dueDate ? new Date(rec.dueDate) : null,
-            paymentStatus: rec.paymentStatus ?? 'PENDING',
-            status: rec.status ?? 'OPEN',
-            remarks: rec.remarks ?? null,
-            createdById: user.id,
-            updatedById: user.id,
-          },
-        });
-        ids.push(row.id);
-      }
-      return ids;
-    });
-
-    await this.audit.record({
-      companyId: user.companyId,
-      actorId: user.id,
-      action: 'IMPORT',
-      entityType: 'DirectDeal',
-      summary: `Imported ${created.length} direct deal(s)`,
-      ...ctx,
-    });
-    return { imported: created.length };
-  }
+export interface Ctx {
+  ipAddress?: string | null;
+  userAgent?: string | null;
 }
 
+const r4 = (n: number) => Number(n.toFixed(4));
+const brokerageTotal = (qty: number, buyer: number, seller: number) => r4(qty * (buyer + seller));
+/** Due date = trade date + payment term (whole days). */
+const dueDateFrom = (tradeDate: Date, days?: number | null) =>
+  days ? new Date(tradeDate.getTime() + days * 86_400_000) : null;
+
+const INCLUDE = {
+  buyerParty: true, sellerParty: true, product: true,
+  sourceDeal: { select: { id: true, dealNo: true } }, // the purchase a self-firm sale draws on
+} as const;
+// Columns the client may sort by (guards against Prisma 500s / injection).
+const SORTABLE = ['dealNo', 'date', 'quantity', 'rate', 'buyerBrokerage', 'sellerBrokerage', 'brokerageTotal', 'shipmentMonth', 'deposit', 'dueDate', 'liftingDate', 'createdAt'];
+// Optional columns: blanks sort last in either direction (Postgres puts them first on DESC).
+const NULLABLE = ['shipmentMonth', 'deposit', 'dueDate', 'liftingDate'];
+
 // ═══════════════════════════════════════════════════════════════════════════
-//  Module D — Degum Deals
-//   Two parties: Main party (external) + Self firm (the middle).
+//  Deals — one unified Buyer ↔ Seller trade. We broker it and charge each side
+//  a per-ton brokerage: Brokerage Total = Qty × (Buyer + Seller brokerage).
 // ═══════════════════════════════════════════════════════════════════════════
 @Injectable()
-export class DegumDealService extends DealBaseService {
-  protected model = 'degumDeal';
-  protected entityType = 'DegumDeal';
-  protected searchFields = ['dealNo', 'vessel', 'originPort', 'shipmentMonth', 'remarks'];
-  protected include = { mainParty: true, selfParty: true, product: true };
-  protected defaultOrderBy = { createdAt: 'desc' as const }; // latest created on top
-  protected dateField = 'dealDate';
-  protected sortableFields = ['dealNo', 'dealDate', 'quantity', 'buyRate', 'sellRate', 'buyValue', 'sellValue', 'grossMargin', 'brokerageRate', 'brokerageTotal', 'paymentDueDate', 'paymentStatus', 'status', 'shipmentMonth', 'originPort', 'vessel', 'createdAt'];
+export class DealService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly numbering: NumberingService,
+    private readonly stock: StockService,
+  ) {}
 
-  constructor(prisma: PrismaService, audit: AuditService, numbering: NumberingService) {
-    super(prisma, audit, numbering);
+  /** Tenant-scoped where clause from the list filters. */
+  private buildWhere(user: RequestUser, q: DealQueryDto): Prisma.DealWhereInput {
+    const where: Prisma.DealWhereInput = { companyId: user.companyId, deletedAt: null };
+    if (q.productId) where.productId = q.productId;
+    if (q.buyerPartyId) where.buyerPartyId = q.buyerPartyId;
+    if (q.sellerPartyId) where.sellerPartyId = q.sellerPartyId;
+    if (q.shipmentMonth) where.shipmentMonth = q.shipmentMonth;
+    if (q.dateFrom || q.dateTo) {
+      const range: Prisma.DateTimeFilter = {};
+      if (q.dateFrom) range.gte = new Date(q.dateFrom);
+      if (q.dateTo) {
+        const to = new Date(q.dateTo);
+        to.setHours(23, 59, 59, 999); // inclusive end-of-day
+        range.lte = to;
+      }
+      where.date = range;
+    }
+    if (q.search) {
+      const contains = { contains: q.search, mode: 'insensitive' as const };
+      where.OR = [
+        { dealNo: contains },
+        { port: contains },
+        { paymentCondition: contains },
+        { shipmentMonth: contains },
+        { buyerParty: { name: contains } },
+        { sellerParty: { name: contains } },
+        { product: { code: contains } },
+      ];
+    }
+    return where;
   }
 
-  protected decorate(row: any) {
-    return { ...row, daysLeft: daysLeft(row.paymentDueDate) };
+  private buildOrderBy(q: DealQueryDto): Prisma.DealOrderByWithRelationInput {
+    if (!q.sortBy || !SORTABLE.includes(q.sortBy)) return { createdAt: 'desc' }; // latest created on top
+    const sort = q.sortDir === 'asc' ? 'asc' : 'desc';
+    return { [q.sortBy]: NULLABLE.includes(q.sortBy) ? { sort, nulls: 'last' } : sort };
   }
 
-  private compute(qty: number, buyRate: number, sellRate: number, brokerageRate: number) {
-    const buyValue = r4(qty * buyRate);
-    const sellValue = r4(qty * sellRate);
-    return {
-      buyValue,
-      sellValue,
-      grossMargin: r4(sellValue - buyValue),
-      brokerageTotal: r4(qty * brokerageRate),
-    };
+  async list(user: RequestUser, q: DealQueryDto) {
+    const where = this.buildWhere(user, q);
+    const [items, total] = await Promise.all([
+      this.prisma.deal.findMany({ where, include: INCLUDE, orderBy: this.buildOrderBy(q), skip: q.skip, take: q.limit }),
+      this.prisma.deal.count({ where }),
+    ]);
+    return { items, meta: buildPageMeta(total, q.page, q.limit) };
   }
 
-  async create(user: RequestUser, dto: CreateDegumDealDto, ctx: Ctx) {
-    const f = this.compute(dto.quantity, dto.buyRate, dto.sellRate, dto.brokerageRate ?? 0);
+  /** All rows matching the filters (no pagination) — used for export. */
+  exportAll(user: RequestUser, q: DealQueryDto) {
+    return this.prisma.deal.findMany({ where: this.buildWhere(user, q), include: INCLUDE, orderBy: this.buildOrderBy(q) });
+  }
+
+  async get(user: RequestUser, id: string) {
+    const row = await this.prisma.deal.findFirst({
+      where: { id, companyId: user.companyId, deletedAt: null },
+      include: INCLUDE,
+    });
+    if (!row) throw new NotFoundException('Deal not found');
+    return row;
+  }
+
+  /** A deal needs two distinct parties that belong to this company. */
+  private async assertParties(companyId: string, buyerPartyId?: string | null, sellerPartyId?: string | null) {
+    if (!buyerPartyId || !sellerPartyId) throw new BadRequestException('A deal needs both a buyer and a seller.');
+    if (buyerPartyId === sellerPartyId) {
+      throw new BadRequestException('Buyer and seller must be different parties.');
+    }
+    const found = await this.prisma.party.count({
+      where: { companyId, deletedAt: null, id: { in: [buyerPartyId, sellerPartyId] } },
+    });
+    if (found < 2) throw new BadRequestException('Buyer or seller party not found.');
+  }
+
+  /** Material's total brokerage ₹/MT (also verifies the material exists). */
+  private async productBrokerage(companyId: string, productId: string): Promise<number> {
+    const p = await this.prisma.product.findFirst({
+      where: { id: productId, companyId, deletedAt: null },
+      select: { brokerage: true },
+    });
+    if (!p) throw new BadRequestException('Material not found.');
+    return Number(p.brokerage);
+  }
+
+  async create(user: RequestUser, dto: CreateDealDto, ctx: Ctx) {
+    await this.assertParties(user.companyId, dto.buyerPartyId, dto.sellerPartyId);
+    // Unset sides default to an equal split of the material's brokerage.
+    const half = r4((await this.productBrokerage(user.companyId, dto.productId)) / 2);
+    const buyerBrokerage = dto.buyerBrokerage ?? half;
+    const sellerBrokerage = dto.sellerBrokerage ?? half;
+    const date = dto.date ? new Date(dto.date) : new Date();
     const row = await this.prisma.$transaction(async (tx) => {
-      const dealNo = await this.numbering.next(user.companyId, 'DEGUM', tx);
-      return tx.degumDeal.create({
+      // Our own firm selling must name the purchase the stock comes from.
+      const sourceDealId = await this.stock.resolveSource({
+        companyId: user.companyId, sellerPartyId: dto.sellerPartyId, productId: dto.productId,
+        quantity: dto.quantity, sourceDealId: dto.sourceDealId, required: true,
+      }, tx);
+      const dealNo = await this.numbering.next(user.companyId, 'DEAL', tx);
+      return tx.deal.create({
         data: {
           companyId: user.companyId,
           dealNo,
-          dealDate: dto.dealDate ? new Date(dto.dealDate) : new Date(),
-          productId: dto.productId ?? null,
-          shipmentMonth: dto.shipmentMonth ?? null,
-          originPort: dto.originPort ?? null,
-          mainPartyId: dto.mainPartyId ?? null,
-          selfPartyId: dto.selfPartyId ?? null,
+          date,
+          sourceDealId,
+          buyerPartyId: dto.buyerPartyId,
+          sellerPartyId: dto.sellerPartyId,
+          productId: dto.productId,
           quantity: dto.quantity,
-          buyRate: dto.buyRate,
-          sellRate: dto.sellRate,
-          brokerageRate: dto.brokerageRate ?? 0,
-          ...f,
-          shipNameReceived: dto.shipNameReceived ?? false,
-          vessel: dto.vessel ?? null,
-          paymentDueDate: dto.paymentDueDate ? new Date(dto.paymentDueDate) : null,
-          paymentStatus: dto.paymentStatus ?? 'PENDING',
-          status: dto.status ?? 'OPEN',
-          remarks: dto.remarks ?? null,
+          rate: dto.rate,
+          buyerBrokerage,
+          sellerBrokerage,
+          brokerageTotal: brokerageTotal(dto.quantity, buyerBrokerage, sellerBrokerage),
+          port: dto.port ?? null,
+          paymentCondition: dto.paymentCondition ?? null,
+          liftingDate: dto.liftingDate ? new Date(dto.liftingDate) : null,
+          shipmentMonth: dto.shipmentMonth ?? null,
+          deposit: dto.deposit ?? null,
+          dueDays: dto.dueDays ?? null,
+          dueDate: dueDateFrom(date, dto.dueDays),
           createdById: user.id,
           updatedById: user.id,
         },
       });
     });
-    await this.auditWrite(user, 'CREATE', row.id, `Created degum deal ${row.dealNo}`, ctx);
+    await this.auditWrite(user, 'CREATE', row.id, `Created deal ${row.dealNo}`, ctx);
     return this.get(user, row.id);
   }
 
-  async update(user: RequestUser, id: string, dto: UpdateDegumDealDto, ctx: Ctx) {
+  async update(user: RequestUser, id: string, dto: UpdateDealDto, ctx: Ctx) {
     const before = await this.get(user, id);
+    await this.assertParties(
+      user.companyId,
+      dto.buyerPartyId ?? before.buyerPartyId,
+      dto.sellerPartyId ?? before.sellerPartyId,
+    );
+    if (dto.productId) await this.productBrokerage(user.companyId, dto.productId); // existence check
     const qty = dto.quantity ?? Number(before.quantity);
-    const buyRate = dto.buyRate ?? Number(before.buyRate);
-    const sellRate = dto.sellRate ?? Number(before.sellRate);
-    const brokerageRate = dto.brokerageRate ?? Number(before.brokerageRate);
-    const f = this.compute(qty, buyRate, sellRate, brokerageRate);
-    const row = await this.prisma.degumDeal.update({
+    const buyerBrokerage = dto.buyerBrokerage ?? Number(before.buyerBrokerage);
+    const sellerBrokerage = dto.sellerBrokerage ?? Number(before.sellerBrokerage);
+    // The due date follows the trade date: a new term, or a moved trade date on a
+    // deal that has a term, recalculates it; dueDays = null clears both. An older
+    // explicit due date (no term) is left alone until a term is picked.
+    const date = dto.date ? new Date(dto.date) : before.date;
+    let due: { dueDays?: number | null; dueDate?: Date | null } = {};
+    if (dto.dueDays === null) due = { dueDays: null, dueDate: null };
+    else if (dto.dueDays) due = { dueDays: dto.dueDays, dueDate: dueDateFrom(date, dto.dueDays) };
+    else if (dto.date && before.dueDays) due = { dueDate: dueDateFrom(date, before.dueDays) };
+
+    // Stock: a purchase with sales keeps its buyer / material / enough qty; a
+    // self-firm sale re-checks its source. An older sale with no source stays
+    // editable until its seller, material, qty or source is changed.
+    const next = {
+      buyerPartyId: dto.buyerPartyId ?? before.buyerPartyId!,
+      sellerPartyId: dto.sellerPartyId ?? before.sellerPartyId!,
+      productId: dto.productId ?? before.productId,
+    };
+    await this.stock.assertPurchaseEdit(before, { buyerPartyId: next.buyerPartyId, productId: next.productId, quantity: qty });
+    const wantedSource = dto.sourceDealId !== undefined ? dto.sourceDealId : before.sourceDealId;
+    const stockChanged =
+      next.sellerPartyId !== before.sellerPartyId || next.productId !== before.productId ||
+      qty !== Number(before.quantity) || wantedSource !== before.sourceDealId;
+    const sourceDealId = await this.stock.resolveSource({
+      companyId: user.companyId, sellerPartyId: next.sellerPartyId, productId: next.productId,
+      quantity: qty, sourceDealId: wantedSource, saleId: id, required: stockChanged || !!before.sourceDealId,
+    });
+
+    const row = await this.prisma.deal.update({
       where: { id },
       data: {
-        ...dto,
-        dealDate: dto.dealDate ? new Date(dto.dealDate) : undefined,
-        paymentDueDate: dto.paymentDueDate ? new Date(dto.paymentDueDate) : undefined,
-        ...f,
+        date: dto.date ? new Date(dto.date) : undefined,
+        buyerPartyId: dto.buyerPartyId ?? undefined,
+        sellerPartyId: dto.sellerPartyId ?? undefined,
+        productId: dto.productId ?? undefined,
+        quantity: qty,
+        rate: dto.rate ?? undefined,
+        buyerBrokerage,
+        sellerBrokerage,
+        brokerageTotal: brokerageTotal(qty, buyerBrokerage, sellerBrokerage),
+        // undefined = leave as is; null = cleared in the form
+        port: dto.port,
+        paymentCondition: dto.paymentCondition,
+        liftingDate: dto.liftingDate === undefined ? undefined : dto.liftingDate ? new Date(dto.liftingDate) : null,
+        shipmentMonth: dto.shipmentMonth,
+        deposit: dto.deposit,
+        ...due,
+        sourceDealId,
         updatedById: user.id,
       },
     });
-    await this.auditWrite(user, 'UPDATE', id, `Updated degum deal ${before.dealNo}`, ctx, AuditService.diff(before, row));
+    await this.auditWrite(user, 'UPDATE', id, `Updated deal ${before.dealNo}`, ctx, AuditService.diff(before, row));
     return this.get(user, id);
   }
 
-  /** Bulk-create Degum deals from a parsed spreadsheet (validate-all then insert in one tx). */
+  async remove(user: RequestUser, id: string, ctx: Ctx) {
+    const deal = await this.get(user, id);
+    await this.stock.assertCanDelete(deal);
+    await this.prisma.deal.update({ where: { id }, data: { deletedAt: new Date(), updatedById: user.id } });
+    await this.audit.record({
+      companyId: user.companyId,
+      actorId: user.id,
+      action: 'DELETE',
+      entityType: 'Deal',
+      entityId: id,
+      summary: 'Soft-deleted deal',
+      ...ctx,
+    });
+    return { deleted: true };
+  }
+
+  /**
+   * Bulk-create deals from a parsed spreadsheet. All-or-nothing: the whole file
+   * is validated first, then inserted in ONE transaction. Blank brokerage cells
+   * default to half the material's brokerage, like the form.
+   */
   async importFile(user: RequestUser, buffer: Buffer | undefined, ctx: Ctx) {
     if (!buffer || !buffer.length) throw new BadRequestException('No file uploaded.');
     const { headers, rows } = parseWorkbook(buffer);
     if (!rows.length) throw new BadRequestException('The file has no data rows.');
-    const missing = requiredHeaders('degum').filter(
+    const missing = requiredHeaders().filter(
       (h) => !headers.some((x) => x.trim().toLowerCase() === h.toLowerCase()),
     );
     if (missing.length) throw new BadRequestException(`Missing required column(s): ${missing.join(', ')}`);
 
-    const lk = await this.buildImportLookups(user.companyId);
-    const { records, errors } = resolveImportRows(SPEC_DEGUM, headers, rows, lk);
+    const [parties, products, deals] = await Promise.all([
+      this.prisma.party.findMany({ where: { companyId: user.companyId, deletedAt: null }, select: { id: true, name: true } }),
+      this.prisma.product.findMany({ where: { companyId: user.companyId, deletedAt: null }, select: { id: true, code: true, brokerage: true } }),
+      this.prisma.deal.findMany({ where: { companyId: user.companyId, deletedAt: null }, select: { id: true, dealNo: true } }),
+    ]);
+    const dealIdByNo = new Map(deals.map((d) => [d.dealNo.trim().toLowerCase(), d.id]));
+    const lk = {
+      partyByName: new Map(parties.map((p) => [p.name.trim().toLowerCase(), { id: p.id }])),
+      productByCode: new Map(products.map((p) => [p.code.trim().toLowerCase(), { id: p.id }])),
+    };
+    const brokerageById = new Map(products.map((p) => [p.id, Number(p.brokerage)]));
+
+    const { records, errors } = resolveImportRows(SPEC_DEAL, headers, rows, lk);
+    records.forEach((rec, i) => {
+      if (rec.buyerPartyId && rec.buyerPartyId === rec.sellerPartyId) {
+        errors.push({ row: i + 2, message: 'Buyer and seller must be different parties' });
+      }
+      if (rec.sourceDealNo) {
+        rec.sourceDealId = dealIdByNo.get(String(rec.sourceDealNo).trim().toLowerCase());
+        if (!rec.sourceDealId) errors.push({ row: i + 2, message: `"Sold From" deal ${rec.sourceDealNo} not found` });
+      }
+    });
     if (errors.length) {
+      errors.sort((a, b) => a.row - b.row);
       throw new BadRequestException({ message: `Import failed — ${errors.length} problem(s) found. Nothing was imported.`, errors });
     }
 
     const created = await this.prisma.$transaction(async (tx) => {
-      const ids: string[] = [];
-      for (const rec of records) {
+      for (const [i, rec] of records.entries()) {
         const quantity = Number(rec.quantity);
-        const buyRate = Number(rec.buyRate);
-        const sellRate = Number(rec.sellRate);
-        const brokerageRate = rec.brokerageRate != null ? Number(rec.brokerageRate) : 0;
-        const buyValue = r4(quantity * buyRate);
-        const sellValue = r4(quantity * sellRate);
-        const dealNo = await this.numbering.next(user.companyId, 'DEGUM', tx);
-        const row = await tx.degumDeal.create({
+        // Stock is checked row by row inside the transaction, so earlier rows'
+        // sales count against what later rows can sell.
+        let sourceDealId: string | null;
+        try {
+          sourceDealId = await this.stock.resolveSource({
+            companyId: user.companyId, sellerPartyId: rec.sellerPartyId, productId: rec.productId,
+            quantity, sourceDealId: rec.sourceDealId, required: true,
+          }, tx);
+        } catch (e: any) {
+          throw new BadRequestException(`Row ${i + 2}: ${e.message} Nothing was imported.`);
+        }
+        const half = r4((brokerageById.get(rec.productId) ?? 0) / 2);
+        const buyerBrokerage = rec.buyerBrokerage ?? half;
+        const sellerBrokerage = rec.sellerBrokerage ?? half;
+        const date = rec.date ? new Date(rec.date) : new Date();
+        const dealNo = await this.numbering.next(user.companyId, 'DEAL', tx);
+        await tx.deal.create({
           data: {
             companyId: user.companyId,
             dealNo,
-            dealDate: rec.dealDate ? new Date(rec.dealDate) : new Date(),
-            productId: rec.productId ?? null,
-            shipmentMonth: rec.shipmentMonth ?? null,
-            originPort: rec.originPort ?? null,
-            mainPartyId: rec.mainPartyId ?? null,
-            selfPartyId: rec.selfPartyId ?? null,
+            date,
+            buyerPartyId: rec.buyerPartyId,
+            sellerPartyId: rec.sellerPartyId,
+            productId: rec.productId,
             quantity,
-            buyRate,
-            sellRate,
-            buyValue,
-            sellValue,
-            grossMargin: r4(sellValue - buyValue),
-            brokerageRate,
-            brokerageTotal: r4(quantity * brokerageRate),
-            shipNameReceived: !!rec.shipNameReceived,
-            vessel: rec.vessel ?? null,
-            paymentDueDate: rec.paymentDueDate ? new Date(rec.paymentDueDate) : null,
-            paymentStatus: rec.paymentStatus ?? 'PENDING',
-            status: rec.status ?? 'OPEN',
-            remarks: rec.remarks ?? null,
+            rate: Number(rec.rate),
+            buyerBrokerage,
+            sellerBrokerage,
+            brokerageTotal: brokerageTotal(quantity, buyerBrokerage, sellerBrokerage),
+            port: rec.port ?? null,
+            paymentCondition: rec.paymentCondition ?? null,
+            liftingDate: rec.liftingDate ? new Date(rec.liftingDate) : null,
+            shipmentMonth: rec.shipmentMonth ?? null,
+            deposit: rec.deposit ?? null,
+            dueDays: rec.dueDays ?? null,
+            dueDate: dueDateFrom(date, rec.dueDays),
+            sourceDealId,
             createdById: user.id,
             updatedById: user.id,
           },
         });
-        ids.push(row.id);
       }
-      return ids;
+      return records.length;
     });
 
     await this.audit.record({
       companyId: user.companyId,
       actorId: user.id,
       action: 'IMPORT',
-      entityType: 'DegumDeal',
-      summary: `Imported ${created.length} degum deal(s)`,
+      entityType: 'Deal',
+      summary: `Imported ${created} deal(s)`,
       ...ctx,
     });
-    return { imported: created.length };
+    return { imported: created };
+  }
+
+  private async auditWrite(
+    user: RequestUser,
+    action: 'CREATE' | 'UPDATE',
+    id: string,
+    summary: string,
+    ctx: Ctx,
+    diff?: Record<string, unknown>,
+  ) {
+    await this.audit.record({
+      companyId: user.companyId,
+      actorId: user.id,
+      action,
+      entityType: 'Deal',
+      entityId: id,
+      summary,
+      diff,
+      ...ctx,
+    });
   }
 }

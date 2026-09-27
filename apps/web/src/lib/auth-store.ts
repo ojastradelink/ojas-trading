@@ -26,6 +26,7 @@ interface AuthState {
     user: AuthUser;
   }) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
+  setUser: (user: AuthUser) => void;
   clear: () => void;
   can: (permission: string) => boolean;
 }
@@ -42,6 +43,7 @@ export const useAuth = create<AuthState>()(
         set({ accessToken, refreshToken, user }),
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
+      setUser: (user) => set({ user }),
       clear: () => set({ accessToken: null, refreshToken: null, user: null }),
       can: (permission) => {
         const u = get().user;
