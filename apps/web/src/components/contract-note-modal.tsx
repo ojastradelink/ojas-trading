@@ -41,6 +41,9 @@ interface NoteData {
 
 const BRAND = '#2a4074'; // the app's primary navy (hsl 222 47% 31%)
 const BRAND_TINT = '#eef1f8';
+// Ojas + Rajendra Kumar Arun Kumar letterhead (apps/web/public). The print
+// iframe's srcdoc inherits the app's base URL, so the relative path resolves there too.
+const LOGO_URL = '/brand/contract-note-logo.png';
 
 const TERM_DUTY = 'Any change in duty, tariff, additional duty, Govt. policies etc. on Buyer A/c.';
 const TERM_SURVEYOR = 'Loading must take place under a surveyor’s supervision, failing which we do not take responsibility for any quality issues at the loading port or elsewhere.';
@@ -119,13 +122,11 @@ function noteStyle(): string {
   .on { box-sizing: border-box; width: 190mm; margin: 0 auto; padding: 8mm 10mm; background: #fff; color: #000;
         font-family: 'Times New Roman', Georgia, serif; font-size: 12px; line-height: 1.35; }
   .on * { box-sizing: border-box; }
-  .on-brand { display: flex; align-items: center; gap: 12px; }
-  .on-mark { width: 46px; height: 46px; flex: none; border-radius: 9px; background: ${BRAND}; color: #fff;
-             display: flex; align-items: center; justify-content: center;
-             font-family: Arial, Helvetica, sans-serif; font-size: 26px; font-weight: 800; }
-  .on-firm { flex: 1; text-align: center; padding-right: 58px; }
-  .on-firm h1 { margin: 0; color: ${BRAND}; font-size: 26px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; }
-  .on-firm .addr { font-size: 9px; margin-top: 3px; line-height: 1.35; color: #222; }
+  /* The logo's lettering is white, so it sits on a navy band. */
+  .on-logo { background: ${BRAND}; border-radius: 3px; padding: 8px 14px; text-align: center; line-height: 0; }
+  .on-logo img { width: 100%; height: auto; }
+  .on-firm { text-align: center; }
+  .on-firm .addr { font-size: 9px; margin-top: 5px; line-height: 1.35; color: #222; }
   .on-rule { border-bottom: 3px solid ${BRAND}; margin: 6px 0 1px; }
   .on-rule2 { border-bottom: 1px solid ${BRAND}; margin: 0 0 6px; }
   .on-title { text-align: center; margin: 4px 0 6px; }
@@ -195,13 +196,8 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
 
   return `
   <div class="on">
-    <div class="on-brand">
-      <div class="on-mark">${esc(firm.trim().charAt(0).toUpperCase() || 'O')}</div>
-      <div class="on-firm">
-        <h1>${esc(firm)}</h1>
-        ${firmLine ? `<div class="addr">${firmLine}</div>` : ''}
-      </div>
-    </div>
+    <div class="on-logo"><img src="${LOGO_URL}" alt="${esc(firm)}"></div>
+    ${firmLine ? `<div class="on-firm"><div class="addr">${firmLine}</div></div>` : ''}
     <div class="on-rule"></div><div class="on-rule2"></div>
     <div class="on-title"><span>CONTRACT NOTE</span></div>
     <div class="on-head">
