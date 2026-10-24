@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Download, FileText, Loader2, Mail, Send, X } from 'lucide-react';
 import Link from 'next/link';
-import { type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -333,6 +333,58 @@ function EmailList({ label, value, onChange }: { label: string; value: string[];
   );
 }
 
+/** Textareas grow with their content instead of scrolling inside the form. */
+function autoGrow(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  el.style.height = 'auto';
+  // border-box: the height has to include the borders on top of the content.
+  el.style.height = `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`;
+}
+
+/**
+ * The note at its real print width (190mm), scaled down to fit its column.
+ * Side by side (lg+) it also fits the height, so the whole page is always in
+ * view and the preview never needs its own scrollbar; stacked on small screens
+ * it fits the width and scrolls with the form.
+ */
+function NotePreview({ html }: { html: string }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState({ scale: 1, w: 0, h: 0 });
+
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    const page = pageRef.current;
+    if (!box || !page) return;
+    const measure = () => {
+      const w = page.offsetWidth; // untransformed size
+      const h = page.offsetHeight;
+      if (!w || !h) return;
+      const sideBySide = window.matchMedia('(min-width: 1024px)').matches;
+      const scale = Math.min(1, box.clientWidth / w, sideBySide ? box.clientHeight / h : Infinity);
+      setFit({ scale, w, h });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    ro.observe(page);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div ref={boxRef} className="flex h-full w-full justify-center">
+      <div className="shrink-0" style={{ width: fit.w * fit.scale, height: fit.h * fit.scale }}>
+        <div
+          ref={pageRef}
+          className="bg-white shadow-sm ring-1 ring-border"
+          style={{ width: '190mm', transform: `scale(${fit.scale})`, transformOrigin: 'top left' }}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVariant): NoteData {
   const d = deal ?? {};
   const g = d.degumDetail ?? {};
@@ -455,6 +507,12 @@ export function ContractNoteModal({
     send.reset();
   }, [deal, sellerEmail, buyerEmail]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The email section sits at the end of the form; bring it into view when opened.
+  const emailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (emailOpen) emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [emailOpen]);
+
   if (!open || !deal) return null;
   const degum = variant === 'degum';
   const sendError = (send.error as any)?.response?.data?.message ?? (send.error as any)?.message;
@@ -469,7 +527,14 @@ export function ContractNoteModal({
   const area = (label: string, k: keyof NoteData, rows = 3, placeholder?: string) => (
     <div className="space-y-1">
       <Label className="text-xs">{label}</Label>
-      <Textarea rows={rows} value={data[k]} placeholder={placeholder} onChange={(e) => setData((s) => ({ ...s, [k]: e.target.value }))} />
+      <Textarea
+        ref={(el) => autoGrow(el)}
+        rows={rows}
+        className="resize-none overflow-hidden"
+        value={data[k]}
+        placeholder={placeholder}
+        onChange={(e) => setData((s) => ({ ...s, [k]: e.target.value }))}
+      />
     </div>
   );
   const section = (title: string, children: ReactNode, dashed = false) => (
@@ -482,7 +547,7 @@ export function ContractNoteModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
-      <div className="relative z-10 flex max-h-[90vh] w-full max-w-6xl flex-col rounded-lg border border-border bg-background shadow-xl">
+      <div className="relative z-10 flex h-[92vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <FileText className="size-4" /> {degum ? 'Degum ' : ''}Contract Note · {deal.dealNo}
@@ -490,9 +555,11 @@ export function ContractNoteModal({
           <Button variant="ghost" size="icon" onClick={onClose}><X className="size-4" /></Button>
         </div>
 
-        <div className="grid flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-2">
-          {/* Editable fields */}
-          <div className="space-y-4 overflow-y-auto border-r border-border p-5">
+        {/* One scroll area: the form on the left (stacked above the preview on small
+            screens); on lg+ only the form scrolls and the preview fits its column. */}
+        <div className="min-h-0 flex-1 overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:overflow-hidden">
+          {/* Editable fields + email */}
+          <div className="space-y-4 p-5 lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-border">
             <p className="text-xs text-muted-foreground">
               Pre-filled from the deal{degum ? ' and its shipment details' : ''}. Add the specification and adjust
               anything below, then download.
@@ -554,48 +621,50 @@ export function ContractNoteModal({
             ), true)}
 
             {area('Other Terms (one clause per line)', 'otherTerms', 6)}
+
+            {emailOpen && (
+              <div ref={emailRef} className="scroll-mt-5 space-y-3 rounded-md border border-primary/40 bg-muted/30 p-3">
+                <p className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
+                  <Mail className="size-4" /> Email the contract note (PDF attached)
+                </p>
+                {(!sellerEmail || !buyerEmail) && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {!sellerEmail && !buyerEmail ? 'Seller and Buyer have' : !sellerEmail ? 'Seller has' : 'Buyer has'} no
+                    email in master data. Add the address below, or save it under{' '}
+                    <Link href="/master/parties" className="underline">Master › Parties</Link>.
+                  </p>
+                )}
+                <EmailList label="To" value={to} onChange={setTo} />
+                <EmailList label="CC" value={cc} onChange={setCc} />
+                <div className="space-y-1">
+                  <Label className="text-xs">Subject</Label>
+                  <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Message (optional, replaces the standard greeting)</Label>
+                  <Textarea
+                    ref={(el) => autoGrow(el)}
+                    rows={3}
+                    className="resize-none overflow-hidden"
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                  />
+                </div>
+                {send.isSuccess && (
+                  <p className="text-sm text-green-700 dark:text-green-400">
+                    Sent to {[...send.data.to, ...send.data.cc].join(', ')}.
+                  </p>
+                )}
+                {send.isError && <p className="text-sm text-destructive">{sendError ?? 'Email could not be sent.'}</p>}
+              </div>
+            )}
           </div>
 
-          {/* Live preview */}
-          <div className="overflow-y-auto bg-muted/40 p-5">
-            <div className="origin-top scale-[0.92] rounded-md border border-border bg-white shadow-sm">
-              <div dangerouslySetInnerHTML={{ __html: `<style>${noteStyle()} .on { width: 100%; max-width: 190mm; }</style>${noteBody(data, variant)}` }} />
-            </div>
+          {/* Live preview — the whole page, scaled to fit */}
+          <div className="border-t border-border bg-muted/40 p-5 lg:min-h-0 lg:border-t-0">
+            <NotePreview html={`<style>${noteStyle()}</style>${noteBody(data, variant)}`} />
           </div>
         </div>
-
-        {emailOpen && (
-          <div className="space-y-3 border-t border-border bg-muted/30 px-5 py-4">
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-              <Mail className="size-4" /> Email the contract note (PDF attached)
-            </p>
-            {(!sellerEmail || !buyerEmail) && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                {!sellerEmail && !buyerEmail ? 'Seller and Buyer have' : !sellerEmail ? 'Seller has' : 'Buyer has'} no
-                email in master data. Add the address below, or save it under{' '}
-                <Link href="/master/parties" className="underline">Master › Parties</Link>.
-              </p>
-            )}
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <EmailList label="To" value={to} onChange={setTo} />
-              <EmailList label="CC" value={cc} onChange={setCc} />
-              <div className="space-y-1">
-                <Label className="text-xs">Subject</Label>
-                <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Message (optional, replaces the standard greeting)</Label>
-                <Textarea rows={2} value={message} onChange={(e) => setMessage(e.target.value)} />
-              </div>
-            </div>
-            {send.isSuccess && (
-              <p className="text-sm text-green-700 dark:text-green-400">
-                Sent to {[...send.data.to, ...send.data.cc].join(', ')}.
-              </p>
-            )}
-            {send.isError && <p className="text-sm text-destructive">{sendError ?? 'Email could not be sent.'}</p>}
-          </div>
-        )}
 
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
