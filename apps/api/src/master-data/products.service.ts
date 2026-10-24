@@ -8,6 +8,7 @@ import {
 import { RequestUser } from '../common/types/request-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto, UpdateProductDto } from './dto/product.dto';
+import { looksDegum } from './degum-material';
 
 export interface Ctx {
   ipAddress?: string | null;
@@ -60,7 +61,7 @@ export class ProductsService {
         name: dto.name,
         unit: dto.unit ?? 'MT',
         brokerage: dto.brokerage ?? 0,
-        isDegum: dto.isDegum ?? false,
+        isDegum: dto.isDegum ?? looksDegum(dto.code, dto.name),
         notes: dto.notes,
       },
     });

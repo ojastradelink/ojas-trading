@@ -1,5 +1,19 @@
+import { liftingTone } from '@/components/lifting-due';
+import { Badge } from '@/components/ui/badge';
 import type { Fmt } from '@/lib/deal-config';
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format';
+
+/** Lifting due date with its days-left badge in the lifting colour. */
+export function LiftingDateCell({ value }: { value: any }) {
+  if (!value) return renderCell(value);
+  const t = liftingTone(value);
+  return (
+    <span className="inline-flex items-center gap-2">
+      {formatDate(value)}
+      <Badge color={t.color}>{t.label}</Badge>
+    </span>
+  );
+}
 
 /** Read a dot-path such as "buyerParty.name" off a row. */
 export function getPath(obj: any, path: string): any {

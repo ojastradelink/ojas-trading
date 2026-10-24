@@ -16,6 +16,14 @@ export interface AppConfig {
     bucket: string;
     forcePathStyle: boolean;
   };
+  mail: {
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    pass: string;
+    from: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -36,5 +44,14 @@ export default (): AppConfig => ({
     secretKey: process.env.S3_SECRET_KEY ?? 'minioadmin',
     bucket: process.env.S3_BUCKET ?? 'ojas-documents',
     forcePathStyle: (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
+  },
+  // Outgoing mail (contract notes). Blank SMTP_HOST = email disabled.
+  mail: {
+    host: process.env.SMTP_HOST ?? '',
+    port: parseInt(process.env.SMTP_PORT ?? '465', 10),
+    secure: (process.env.SMTP_SECURE ?? 'true') === 'true',
+    user: process.env.SMTP_USER ?? '',
+    pass: process.env.SMTP_PASS ?? '',
+    from: process.env.MAIL_FROM ?? process.env.SMTP_USER ?? '',
   },
 });

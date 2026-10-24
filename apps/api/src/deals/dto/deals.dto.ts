@@ -1,11 +1,15 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   IsDateString,
+  IsEmail,
   IsIn,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
@@ -53,4 +57,26 @@ export class DealQueryDto extends PaginationQueryDto {
   @IsOptional() @IsDateString() dateFrom?: string;
   @ApiPropertyOptional({ description: 'Deal date to (inclusive)' })
   @IsOptional() @IsDateString() dateTo?: string;
+}
+
+// ── Email a contract note (multipart: PDF in `file` + these fields) ─────────
+//   Address lists arrive from FormData as a comma-separated string (or repeated
+//   fields); both normalise to a trimmed, de-duplicated array.
+const emailList = ({ value }: { value: unknown }) => {
+  const raw = (Array.isArray(value) ? value : [value]).flatMap((v) => String(v ?? '').split(/[,;\s]+/));
+  return [...new Set(raw.map((v) => String(v).trim().toLowerCase()).filter(Boolean))];
+};
+
+export class EmailContractNoteDto {
+  @ApiProperty({ type: [String] })
+  @Transform(emailList) @ArrayMinSize(1, { message: 'Add at least one recipient.' }) @ArrayMaxSize(20)
+  @IsEmail({}, { each: true, message: 'Every recipient must be a valid email address.' })
+  to: string[] = []; // default so a missing field reports just "Add at least one recipient."
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional() @Transform(emailList) @ArrayMaxSize(20)
+  @IsEmail({}, { each: true, message: 'Every CC must be a valid email address.' }) cc?: string[];
+
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) subject?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(5000) message?: string;
 }

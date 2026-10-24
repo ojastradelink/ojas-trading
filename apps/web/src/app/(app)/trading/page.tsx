@@ -6,6 +6,7 @@ import { ArrowUpRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { DataTable } from '@/components/data-table';
+import { liftingBarColumn, LiftingLegend, liftingTone } from '@/components/lifting-due';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,46 +37,11 @@ interface Desk {
   sales: Sale[];
 }
 
-/** Lifting-due colour: red under 5 days (or overdue), yellow 5–15 days, green beyond 15. */
-function dueTone(daysLeft: number | null): { color: string; label: string } {
-  if (daysLeft == null) return { color: '#94a3b8', label: 'No lifting date' };
-  if (daysLeft < 5) {
-    return { color: '#ef4444', label: daysLeft < 0 ? `Overdue ${-daysLeft}d` : daysLeft === 0 ? 'Due today' : `${daysLeft} days` };
-  }
-  if (daysLeft <= 15) return { color: '#f59e0b', label: `${daysLeft} days` };
-  return { color: '#22c55e', label: `${daysLeft} days` };
-}
-
-const LEGEND = [
-  { color: '#ef4444', label: 'Less than 5 days' },
-  { color: '#f59e0b', label: '5 – 15 days' },
-  { color: '#22c55e', label: 'Above 15 days' },
-  { color: '#94a3b8', label: 'No lifting date' },
-];
-
-/** Colour bar at the row's left edge (by lifting due date), shared by both tables. */
-function dueColumns<T extends { daysLeft: number | null }>(): ColumnDef<T, any>[] {
-  return [
-    {
-      id: '_due', header: '', enableSorting: false,
-      meta: { cellClassName: 'relative p-0', headerClassName: 'p-0' },
-      cell: ({ row }) => {
-        const t = dueTone(row.original.daysLeft);
-        return (
-          <>
-            <span title={t.label} className="absolute inset-y-0 left-0 w-2" style={{ background: t.color }} />
-            <span className="block w-5" aria-hidden />
-          </>
-        );
-      },
-    },
-  ];
-}
-const dueDateCells = <T extends { daysLeft: number | null; dueDate: string | null; liftingDate: string | null }>(): ColumnDef<T, any>[] => [
+const dueDateCells = <T extends { dueDate: string | null; liftingDate: string | null }>(): ColumnDef<T, any>[] => [
   { id: 'liftingDate', header: 'Lifting Due', enableSorting: false, cell: ({ row }) => formatDate(row.original.liftingDate) },
   {
     id: 'liftingIn', header: 'Lifting In', enableSorting: false,
-    cell: ({ row }) => { const t = dueTone(row.original.daysLeft); return <Badge color={t.color}>{t.label}</Badge>; },
+    cell: ({ row }) => { const t = liftingTone(row.original.liftingDate); return <Badge color={t.color}>{t.label}</Badge>; },
   },
   { id: 'dueDate', header: 'Payment Due', enableSorting: false, cell: ({ row }) => formatDate(row.original.dueDate) },
 ];
@@ -98,7 +64,7 @@ export default function TradingDeskPage() {
   const d = desk.data;
 
   const holdingCols = useMemo<ColumnDef<Holding, any>[]>(() => [
-    ...dueColumns<Holding>(),
+    liftingBarColumn<Holding>((r) => r.liftingDate),
     { id: 'dealNo', header: 'Deal', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.dealNo}</span> },
     { id: 'date', header: 'Date', enableSorting: false, cell: ({ row }) => formatDate(row.original.date) },
     { id: 'selfFirm', header: 'Own Firm', accessorKey: 'selfFirm', enableSorting: false },
@@ -129,7 +95,7 @@ export default function TradingDeskPage() {
   ], [router]);
 
   const saleCols = useMemo<ColumnDef<Sale, any>[]>(() => [
-    ...dueColumns<Sale>(),
+    liftingBarColumn<Sale>((r) => r.liftingDate),
     { id: 'dealNo', header: 'Deal', enableSorting: false, cell: ({ row }) => <span className="font-medium">{row.original.dealNo}</span> },
     { id: 'date', header: 'Date', enableSorting: false, cell: ({ row }) => formatDate(row.original.date) },
     { id: 'selfFirm', header: 'Own Firm', accessorKey: 'selfFirm', enableSorting: false },
@@ -150,7 +116,7 @@ export default function TradingDeskPage() {
 
   return (
     <div>
-      <PageHeader title="Trading Desk" description="Your own firm's trades — stock in hand and sales, coloured by lifting due date" />
+      <PageHeader title="Trading Desk" description="Your own firm's trades — stock in hand and sales, soonest contract expiry (lifting due date) first" />
 
       <div className="mb-4 flex flex-wrap items-end gap-3">
         {(d?.selfFirms.length ?? 0) > 1 && (
@@ -180,15 +146,7 @@ export default function TradingDeskPage() {
           <input type="checkbox" className="size-4" checked={showSoldOut} onChange={(e) => setShowSoldOut(e.target.checked)} />
           Show sold-out purchases
         </label>
-        <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-          <span className="font-medium">Lifting due:</span>
-          {LEGEND.map((c) => (
-            <span key={c.label} className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-3 w-3.5 rounded-sm" style={{ background: c.color }} />
-              {c.label}
-            </span>
-          ))}
-        </div>
+        <LiftingLegend className="ml-auto" />
       </div>
 
       {d && d.selfFirms.length === 0 && (

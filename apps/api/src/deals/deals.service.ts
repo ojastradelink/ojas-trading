@@ -3,11 +3,12 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { buildPageMeta } from '../common/dto/pagination.dto';
 import { RequestUser } from '../common/types/request-user';
+import { MailService } from '../mail/mail.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockService } from '../trading/stock.service';
 import { parseWorkbook, requiredHeaders, resolveImportRows, SPEC_DEAL } from './deals-io';
-import { CreateDealDto, DealQueryDto, UpdateDealDto } from './dto/deals.dto';
+import { CreateDealDto, DealQueryDto, EmailContractNoteDto, UpdateDealDto } from './dto/deals.dto';
 
 export interface Ctx {
   ipAddress?: string | null;
@@ -40,6 +41,7 @@ export class DealService {
     private readonly audit: AuditService,
     private readonly numbering: NumberingService,
     private readonly stock: StockService,
+    private readonly mail: MailService,
   ) {}
 
   /** Tenant-scoped where clause from the list filters. */
@@ -234,6 +236,48 @@ export class DealService {
     return this.get(user, id);
   }
 
+  /**
+   * Email the contract note to the parties. The PDF is rendered in the browser
+   * from the (possibly edited) note, so what is sent is exactly what was previewed.
+   */
+  async emailContractNote(
+    user: RequestUser, id: string, dto: EmailContractNoteDto,
+    file: { buffer?: Buffer; mimetype?: string } | undefined, ctx: Ctx,
+  ) {
+    const deal = await this.get(user, id);
+    const pdf = file?.buffer;
+    if (!pdf?.length || pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      throw new BadRequestException('Attach the contract note as a PDF.');
+    }
+    const company = await this.prisma.company.findUnique({ where: { id: user.companyId } });
+    const firm = company?.legalName || company?.name || 'Ojas Trading';
+    const product = deal.product?.name ?? deal.product?.code ?? '';
+    const subject = dto.subject?.trim() || `Contract Note ${deal.dealNo}${product ? ` – ${product}` : ''}`;
+    const cc = (dto.cc ?? []).filter((e) => !dto.to.includes(e));
+
+    await this.mail.send({
+      to: dto.to,
+      cc,
+      replyTo: company?.email,
+      subject,
+      html: contractNoteMailHtml(deal, firm, product, dto.message),
+      text: contractNoteMailText(deal, firm, product, dto.message),
+      attachments: [{ filename: `Contract-Note-${deal.dealNo.replace(/[^\w.-]+/g, '-')}.pdf`, content: pdf, contentType: 'application/pdf' }],
+    });
+
+    await this.audit.record({
+      companyId: user.companyId,
+      actorId: user.id,
+      action: 'EXPORT',
+      entityType: 'Deal',
+      entityId: id,
+      summary: `Emailed contract note ${deal.dealNo} to ${[...dto.to, ...cc].join(', ')}`,
+      diff: { to: dto.to, cc, subject },
+      ...ctx,
+    });
+    return { sent: true, to: dto.to, cc };
+  }
+
   async remove(user: RequestUser, id: string, ctx: Ctx) {
     const deal = await this.get(user, id);
     await this.stock.assertCanDelete(deal);
@@ -369,4 +413,47 @@ export class DealService {
       ...ctx,
     });
   }
+}
+
+// ── contract-note email body ────────────────────────────────────────────────
+const escHtml = (v: unknown) =>
+  String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+const inr = (v: unknown, digits = 0) =>
+  Number(v ?? 0).toLocaleString('en-IN', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+const ddmmyyyy = (d?: Date | null) =>
+  d ? `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}` : '';
+
+type MailDeal = Prisma.DealGetPayload<{ include: typeof INCLUDE }>;
+
+function contractNoteRows(deal: MailDeal, product: string): [string, string][] {
+  return [
+    ['Contract Note No.', deal.dealNo],
+    ['Date', ddmmyyyy(deal.date)],
+    ['Seller', deal.sellerParty?.name ?? ''],
+    ['Buyer', deal.buyerParty?.name ?? ''],
+    ['Commodity', product],
+    ['Quantity', `${inr(deal.quantity, 3)} MT`],
+    ['Rate', `Rs. ${inr(deal.rate, 2)} per MT`],
+  ];
+}
+
+function contractNoteMailHtml(deal: MailDeal, firm: string, product: string, message?: string): string {
+  const rows = contractNoteRows(deal, product)
+    .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#2a4074;font-weight:600">${escHtml(k)}</td><td style="padding:4px 0">${escHtml(v)}</td></tr>`)
+    .join('');
+  const note = message?.trim()
+    ? `<p style="white-space:pre-line">${escHtml(message.trim())}</p>`
+    : '<p>Dear Sir/Madam,</p><p>Please find attached the contract note for the following transaction.</p>';
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111">
+${note}
+<table style="border-collapse:collapse;margin:12px 0">${rows}</table>
+<p>Kindly check the attached contract note and let us know of any discrepancy.</p>
+<p>Regards,<br><strong>${escHtml(firm)}</strong></p>
+</div>`;
+}
+
+function contractNoteMailText(deal: MailDeal, firm: string, product: string, message?: string): string {
+  const intro = message?.trim() || 'Dear Sir/Madam,\n\nPlease find attached the contract note for the following transaction.';
+  const rows = contractNoteRows(deal, product).map(([k, v]) => `${k}: ${v}`).join('\n');
+  return [intro, rows, 'Kindly check the attached contract note and let us know of any discrepancy.', `Regards,\n${firm}`].join('\n\n') + '\n';
 }

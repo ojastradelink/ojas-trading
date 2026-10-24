@@ -2,11 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColumnDef } from '@tanstack/react-table';
-import { ArrowDownUp, Calculator, Filter, Pencil, Search, Ship, X } from 'lucide-react';
+import { ArrowDownUp, Calculator, FileDown, Filter, Pencil, Search, Ship, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { ContractNoteModal } from '@/components/contract-note-modal';
 import { DataTable } from '@/components/data-table';
 import { DegumPaymentCalculator } from '@/components/degum-payment-calculator';
-import { getPath, renderCell } from '@/components/deal-cell';
+import { getPath, LiftingDateCell, renderCell } from '@/components/deal-cell';
+import { liftingBarColumn, LiftingLegend } from '@/components/lifting-due';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
@@ -65,6 +67,7 @@ export default function DegumPage() {
   const [form, setForm] = useState<Record<string, string>>({});
   const [tab, setTab] = useState<'shipments' | 'calculator'>('shipments');
   const [calcDealId, setCalcDealId] = useState('');
+  const [contractRow, setContractRow] = useState<any | null>(null);
 
   const params = useMemo(() => {
     const p: Record<string, any> = {};
@@ -97,13 +100,16 @@ export default function DegumPage() {
   function close() { setEditing(null); setForm({}); save.reset(); }
 
   const columns = useMemo<ColumnDef<any, any>[]>(() => {
-    const cols: ColumnDef<any, any>[] = [...DEAL_COLUMNS, ...DEGUM_COLUMNS].map((c) => ({
-      id: c.key,
-      header: c.label,
-      accessorFn: (row: any) => getPath(row, c.key),
-      cell: ({ getValue }) => renderCell(getValue(), c.fmt),
-      enableSorting: false,
-    }));
+    const cols: ColumnDef<any, any>[] = [
+      liftingBarColumn<any>((row) => row.liftingDate),
+      ...[...DEAL_COLUMNS, ...DEGUM_COLUMNS].map((c): ColumnDef<any, any> => ({
+        id: c.key,
+        header: c.label,
+        accessorFn: (row: any) => getPath(row, c.key),
+        cell: ({ getValue }) => c.key === 'liftingDate' ? <LiftingDateCell value={getValue()} /> : renderCell(getValue(), c.fmt),
+        enableSorting: false,
+      })),
+    ];
     cols.push({
       id: '_actions',
       header: '',
@@ -115,6 +121,9 @@ export default function DegumPage() {
           </Button>
           <Button variant="ghost" size="icon" title="Payment calculator" onClick={(e) => { e.stopPropagation(); openCalculator(row.original); }}>
             <Calculator className="size-4" />
+          </Button>
+          <Button variant="ghost" size="icon" title="Contract note" onClick={(e) => { e.stopPropagation(); setContractRow(row.original); }}>
+            <FileDown className="size-4" />
           </Button>
         </div>
       ),
@@ -182,7 +191,7 @@ export default function DegumPage() {
     <div>
       <PageHeader
         title="Degum"
-        description={`${list.data?.meta.total ?? 0} degum deals · track vessel arrival, clearance & payment`}
+        description={`${list.data?.meta.total ?? 0} degum deals · every deal on a material marked Degum in Products · track vessel arrival, clearance & payment`}
       />
 
       <div className="mb-4 inline-flex rounded-lg border border-border bg-card p-1" role="tablist">
@@ -223,6 +232,7 @@ export default function DegumPage() {
             <ArrowDownUp className="size-4" />
           </Button>
         </div>
+        <LiftingLegend className="ml-auto" />
       </div>
 
       {showFilters && (
@@ -306,6 +316,8 @@ export default function DegumPage() {
           </p>
         )}
       </Modal>
+
+      <ContractNoteModal open={!!contractRow} onClose={() => setContractRow(null)} deal={contractRow} variant="degum" />
     </div>
   );
 }

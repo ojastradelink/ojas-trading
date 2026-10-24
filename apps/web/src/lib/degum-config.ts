@@ -5,6 +5,17 @@ export const PAYMENT_DUE_OPTIONS = Array.from({ length: 11 }, (_, i) => i + 5); 
 
 export const DEGUM_ENDPOINT = '/degum';
 
+/**
+ * Default Degum flag for a new product — mirrors the API (master-data/degum-material.ts):
+ * code CDSBO / CSBDO (letters only), or a name saying "crude … degummed".
+ */
+export function looksDegum(code?: string, name?: string): boolean {
+  const c = (code ?? '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (c === 'CDSBO' || c === 'CSBDO') return true;
+  const n = (name ?? '').toLowerCase();
+  return n.includes('crude') && n.includes('degum');
+}
+
 export interface DegumField {
   key: string;
   label: string;

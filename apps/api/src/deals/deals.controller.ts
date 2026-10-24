@@ -20,7 +20,7 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { RequestUser } from '../common/types/request-user';
 import { DealService } from './deals.service';
 import { buildDealWorkbook } from './deals-io';
-import { CreateDealDto, DealQueryDto, UpdateDealDto } from './dto/deals.dto';
+import { CreateDealDto, DealQueryDto, EmailContractNoteDto, UpdateDealDto } from './dto/deals.dto';
 
 function ctx(req: Request) {
   return {
@@ -58,6 +58,16 @@ export class DealController {
   @UseInterceptors(FileInterceptor('file'))
   import(@CurrentUser() u: RequestUser, @UploadedFile() file: any, @Req() r: Request) {
     return this.svc.importFile(u, file?.buffer, ctx(r));
+  }
+
+  /** Email the contract note (PDF built in the browser from the edited note) to the parties. */
+  @Post(':id/contract-note/email') @RequirePermissions('deal:email')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  emailContractNote(
+    @Param('id') id: string, @CurrentUser() u: RequestUser, @Body() dto: EmailContractNoteDto,
+    @UploadedFile() file: any, @Req() r: Request,
+  ) {
+    return this.svc.emailContractNote(u, id, dto, file, ctx(r));
   }
 
   @Get(':id') @RequirePermissions('deal:read')

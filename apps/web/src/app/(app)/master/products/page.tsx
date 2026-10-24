@@ -5,6 +5,7 @@ import { ColumnDef } from '@tanstack/react-table';
 import { ArrowLeft, Pencil, Plus, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { looksDegum } from '@/lib/degum-config';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/page-header';
@@ -117,12 +118,22 @@ export default function ProductsPage() {
           ].map((f) => (
             <div key={f.k} className="space-y-1.5">
               <Label>{f.l}</Label>
-              <Input type={f.t === 'number' ? 'number' : 'text'} min={f.t === 'number' ? 0 : undefined} value={form[f.k] ?? ''} onChange={(e) => setForm((s) => ({ ...s, [f.k]: e.target.value }))} />
+              <Input
+                type={f.t === 'number' ? 'number' : 'text'}
+                min={f.t === 'number' ? 0 : undefined}
+                value={form[f.k] ?? ''}
+                onChange={(e) => setForm((s) => {
+                  const next = { ...s, [f.k]: e.target.value };
+                  // New product: tick Degum for a degum code / name until the user sets it themselves.
+                  if (!editId && !s.__degumTouched && (f.k === 'code' || f.k === 'name')) next.isDegum = String(looksDegum(next.code, next.name));
+                  return next;
+                })}
+              />
             </div>
           ))}
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm">
-          <input type="checkbox" className="size-4" checked={form.isDegum === 'true'} onChange={(e) => setForm((s) => ({ ...s, isDegum: String(e.target.checked) }))} />
+          <input type="checkbox" className="size-4" checked={form.isDegum === 'true'} onChange={(e) => setForm((s) => ({ ...s, isDegum: String(e.target.checked), __degumTouched: 'true' }))} />
           Degum material — its deals are tracked in the Degum section (vessel, clearance, payment)
         </label>
         <p className="mt-2 text-xs text-muted-foreground">

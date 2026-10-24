@@ -12,6 +12,7 @@ import { DealsModule } from './deals/deals.module';
 import { DegumModule } from './degum/degum.module';
 import { TradingModule } from './trading/trading.module';
 import { HealthController } from './health/health.controller';
+import { MailModule } from './mail/mail.module';
 import { MasterDataModule } from './master-data/master-data.module';
 import { NumberingModule } from './numbering/numbering.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -29,6 +30,7 @@ import { UsersModule } from './users/users.module';
     PrismaModule,
     NumberingModule,
     AuditModule,
+    MailModule,
     AuthModule,
     UsersModule,
     MasterDataModule,

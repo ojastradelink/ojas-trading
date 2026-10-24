@@ -17,7 +17,8 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ContractNoteModal } from '@/components/contract-note-modal';
 import { DataTable } from '@/components/data-table';
-import { getPath, renderCell } from '@/components/deal-cell';
+import { getPath, LiftingDateCell, renderCell } from '@/components/deal-cell';
+import { liftingBarColumn, LiftingLegend } from '@/components/lifting-due';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
 import { Combobox } from '@/components/ui/combobox';
@@ -49,6 +50,8 @@ const KEEP_DUE = 'keep';
 const SELLER_SELF = '__sellerSelf';
 /** Form-only: qty in hand on the chosen source, for its hint. */
 const SOURCE_IN_HAND = '__sourceInHand';
+/** Form-only: the chosen material is flagged Degum ('true' / 'false'). */
+const MATERIAL_DEGUM = '__materialDegum';
 
 function rowToForm(row: any): Record<string, string> {
   const f: Record<string, string> = {};
@@ -59,6 +62,7 @@ function rowToForm(row: any): Record<string, string> {
   }
   if (row.dueDays == null && row.dueDate) f.dueDays = KEEP_DUE;
   f[SELLER_SELF] = String(!!row.sellerParty?.isSelf);
+  if (row.product) f[MATERIAL_DEGUM] = String(!!row.product.isDegum);
   return f;
 }
 
@@ -113,12 +117,16 @@ export default function DealsPage() {
   const save = useMutation({
     mutationFn: (payload: any) =>
       editing ? apiPatch(`${DEAL_ENDPOINT}/${editing.id}`, payload) : apiPost(DEAL_ENDPOINT, payload),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['deals'] }); closeModal(); },
+    onSuccess: () => { refreshDealViews(); closeModal(); },
   });
   const remove = useMutation({
     mutationFn: (id: string) => apiDelete(`${DEAL_ENDPOINT}/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['deals'] }),
+    onSuccess: () => refreshDealViews(),
   });
+  /** Deals also feed the Degum section and the Trading Desk — refetch those too. */
+  function refreshDealViews() {
+    for (const key of ['deals', 'degum', 'trading-desk']) qc.invalidateQueries({ queryKey: [key] });
+  }
 
   function setFilter(key: string, value: string, label?: string) {
     setFilters((s) => ({ ...s, [key]: value }));
@@ -145,6 +153,7 @@ export default function DealsPage() {
         sellerPartyId: src.buyerPartyId,
         [SELLER_SELF]: 'true',
         productId: src.productId ?? '',
+        [MATERIAL_DEGUM]: src.product ? String(!!src.product.isDegum) : '',
         sourceDealId: src.id,
         buyerBrokerage: halfOf(src.product?.brokerage),
         sellerBrokerage: halfOf(src.product?.brokerage),
@@ -188,7 +197,7 @@ export default function DealsPage() {
       const res = await api.post(`${DEAL_ENDPOINT}/import`, fd);
       const payload = (res.data?.data ?? res.data) as { imported: number };
       setImportResult({ imported: payload.imported });
-      qc.invalidateQueries({ queryKey: ['deals'] });
+      refreshDealViews();
     } catch (err: any) {
       const d = err?.response?.data;
       setImportResult({ message: d?.message ?? 'Import failed.', errors: d?.errors });
@@ -198,13 +207,16 @@ export default function DealsPage() {
   }
 
   const columns = useMemo<ColumnDef<any, any>[]>(() => {
-    const cols: ColumnDef<any, any>[] = DEAL_COLUMNS.map((c) => ({
-      id: c.key,
-      header: c.label,
-      accessorFn: (row: any) => getPath(row, c.key),
-      cell: ({ getValue }) => renderCell(getValue(), c.fmt),
-      enableSorting: false,
-    }));
+    const cols: ColumnDef<any, any>[] = [
+      liftingBarColumn<any>((row) => row.liftingDate),
+      ...DEAL_COLUMNS.map((c): ColumnDef<any, any> => ({
+        id: c.key,
+        header: c.label,
+        accessorFn: (row: any) => getPath(row, c.key),
+        cell: ({ getValue }) => c.key === 'liftingDate' ? <LiftingDateCell value={getValue()} /> : renderCell(getValue(), c.fmt),
+        enableSorting: false,
+      })),
+    ];
     cols.push({
       id: '_actions',
       header: '',
@@ -277,6 +289,10 @@ export default function DealsPage() {
       : rel.name;
     const selectedLabel = labels[f.key] || derivedLabel;
     const hint = f.key === 'dueDays' ? dueHint
+      : f.key === 'productId' && form[MATERIAL_DEGUM]
+        ? form[MATERIAL_DEGUM] === 'true'
+          ? 'Degum material — this deal also appears in the Degum section'
+          : 'Not a degum material — to track it in Degum, tick “Degum material” on this product in Products'
       : f.ref === 'sources'
         ? form[SOURCE_IN_HAND] ? `${form[SOURCE_IN_HAND]} MT in hand on this purchase` : 'Your own firm is selling — pick the purchase this stock comes from'
         : f.hint;
@@ -300,7 +316,12 @@ export default function DealsPage() {
               [SOURCE_IN_HAND]: formatNumber(item.inHand, 3),
               // The source fixes the material (and so its brokerage split).
               ...(item.productId !== s.productId
-                ? { productId: item.productId, buyerBrokerage: halfOf(item.product?.brokerage), sellerBrokerage: halfOf(item.product?.brokerage) }
+                ? {
+                    productId: item.productId,
+                    buyerBrokerage: halfOf(item.product?.brokerage),
+                    sellerBrokerage: halfOf(item.product?.brokerage),
+                    [MATERIAL_DEGUM]: item.product ? String(!!item.product.isDegum) : '',
+                  }
                 : {}),
             }));
             if (item.product) setLabels((l) => ({ ...l, productId: `${item.product.code} — ${item.product.name}` }));
@@ -320,7 +341,9 @@ export default function DealsPage() {
               ...s,
               [f.key]: id,
               // Picking a material splits its brokerage equally between both sides.
-              ...(f.key === 'productId' ? { buyerBrokerage: halfOf(item.brokerage), sellerBrokerage: halfOf(item.brokerage) } : {}),
+              ...(f.key === 'productId'
+                ? { buyerBrokerage: halfOf(item.brokerage), sellerBrokerage: halfOf(item.brokerage), [MATERIAL_DEGUM]: String(!!item.isDegum) }
+                : {}),
               // Our own firm as seller → it must sell from one of its purchases.
               ...(f.key === 'sellerPartyId' ? { [SELLER_SELF]: String(!!item.isSelf) } : {}),
               // A new seller or material invalidates the chosen source.
@@ -403,6 +426,7 @@ export default function DealsPage() {
             <ArrowDownUp className="size-4" />
           </Button>
         </div>
+        <LiftingLegend className="ml-auto" />
       </div>
 
       {showFilters && (

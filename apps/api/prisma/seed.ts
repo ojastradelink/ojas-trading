@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client';
 import * as argon2 from 'argon2';
 import * as fs from 'fs';
 import * as path from 'path';
+import { looksDegum } from '../src/master-data/degum-material';
 
 const prisma = new PrismaClient();
 
@@ -22,7 +23,7 @@ const RESOURCES = [
   'dashboard', 'party', 'product', 'deal', 'degum', 'audit', 'user', 'settings',
 ];
 const ACTIONS = ['read', 'create', 'update', 'delete'];
-const EXTRA = ['report:export'];
+const EXTRA = ['report:export', 'deal:email']; // deal:email — send contract notes to the parties
 
 function permissionKeys(): string[] {
   const k = new Set<string>();
@@ -40,10 +41,11 @@ const ROLE_POLICY: Record<string, (k: string) => boolean> = {
   // Finance records duty / final payment; Operations tracks vessels — both fill in Degum details.
   FINANCE: (k) =>
     k.startsWith('dashboard') || k === 'report:export' ||
-    k === 'party:read' || k === 'product:read' || k === 'deal:read' || k === 'degum:read' || k === 'degum:update',
+    k === 'party:read' || k === 'product:read' || k === 'deal:read' || k === 'degum:read' || k === 'degum:update' ||
+    k === 'deal:email',
   OPERATIONS: (k) =>
     k.startsWith('dashboard') || k === 'deal:read' || k === 'party:read' || k === 'product:read' ||
-    k === 'degum:read' || k === 'degum:update',
+    k === 'degum:read' || k === 'degum:update' || k === 'deal:email',
   VIEWER: (k) => k.endsWith(':read'),
 };
 const ROLES = [
@@ -142,7 +144,7 @@ async function main() {
       update: { name: p.name, unit: p.unit },
       create: {
         companyId: company.id, code: p.code, name: p.name, unit: p.unit || 'MT', brokerage: DEMO_BROKERAGE,
-        isDegum: p.code.trim().toUpperCase() === 'CDSBO', // CDSBO deals are degum by default
+        isDegum: looksDegum(p.code, p.name), // CDSBO deals are degum by default
       },
     });
     productByCode.set(p.code.toLowerCase(), row.id);
@@ -152,7 +154,7 @@ async function main() {
     const hit = productByCode.get(code.toLowerCase());
     if (hit) return hit;
     const row = await prisma.product.create({
-      data: { companyId: company.id, code, name: code, unit: 'MT', brokerage: DEMO_BROKERAGE, isDegum: code.trim().toUpperCase() === 'CDSBO' },
+      data: { companyId: company.id, code, name: code, unit: 'MT', brokerage: DEMO_BROKERAGE, isDegum: looksDegum(code) },
     });
     productByCode.set(code.toLowerCase(), row.id);
     return row.id;

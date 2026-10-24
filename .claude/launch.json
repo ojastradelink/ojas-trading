@@ -9,6 +9,13 @@
       "autoPort": false
     },
     {
+      "name": "api-built",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "-w", "@ojas/api"],
+      "port": 4000,
+      "autoPort": false
+    },
+    {
       "name": "web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "-w", "@ojas/web"],

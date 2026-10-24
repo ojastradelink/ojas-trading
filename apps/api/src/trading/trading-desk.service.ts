@@ -18,6 +18,13 @@ function daysLeft(due: Date | null): number | null {
   return Math.round((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - today) / DAY);
 }
 
+// Contract expiry (lifting due date) soonest first; trades with no lifting date last.
+const EXPIRY_FIRST: Prisma.DealOrderByWithRelationInput[] = [
+  { liftingDate: { sort: 'asc', nulls: 'last' } },
+  { date: 'desc' },
+  { createdAt: 'desc' },
+];
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  Trading desk — every trade our own (self) firm makes. Purchases are stock in
 //  hand (qty − what was sold from them); sales show which purchase they drew on.
@@ -43,12 +50,12 @@ export class TradingDeskService {
           buyerParty: true, sellerParty: true, product: true,
           sales: { where: { deletedAt: null }, select: { id: true, dealNo: true, quantity: true } },
         },
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        orderBy: EXPIRY_FIRST,
       }),
       this.prisma.deal.findMany({
         where: { ...base, sellerParty: selfFilter },
         include: { buyerParty: true, sellerParty: true, product: true, sourceDeal: { select: { id: true, dealNo: true } } },
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        orderBy: EXPIRY_FIRST,
       }),
     ]);
 
