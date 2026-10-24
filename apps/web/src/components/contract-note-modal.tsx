@@ -40,7 +40,11 @@ interface NoteData {
 }
 
 const BRAND = '#2a4074'; // the app's primary navy (hsl 222 47% 31%)
-const BRAND_TINT = '#eef1f8';
+const BRAND_TINT = '#f1f4fa';
+const GOLD = '#e2a900'; // the logo's oil-drop gold
+const LINE = '#cfd6e4';
+const INK = '#1a1f2b';
+const MUTED = '#5b6475';
 // Ojas + Rajendra Kumar Arun Kumar letterhead (apps/web/public). The print
 // iframe's srcdoc inherits the app's base URL, so the relative path resolves there too.
 const LOGO_URL = '/brand/contract-note-logo.png';
@@ -119,38 +123,46 @@ function withMs(name: string): string {
 
 function noteStyle(): string {
   return `
-  .on { box-sizing: border-box; width: 190mm; margin: 0 auto; padding: 8mm 10mm; background: #fff; color: #000;
-        font-family: 'Times New Roman', Georgia, serif; font-size: 12px; line-height: 1.35; }
+  .on { box-sizing: border-box; width: 190mm; margin: 0 auto; padding: 8mm 10mm; background: #fff; color: ${INK};
+        font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.4; }
   .on * { box-sizing: border-box; }
-  /* The logo's lettering is white, so it sits on a navy band. */
-  .on-logo { background: ${BRAND}; border-radius: 3px; padding: 8px 14px; text-align: center; line-height: 0; }
-  .on-logo img { width: 100%; height: auto; }
-  .on-firm { text-align: center; }
-  .on-firm .addr { font-size: 9px; margin-top: 5px; line-height: 1.35; color: #222; }
-  .on-rule { border-bottom: 3px solid ${BRAND}; margin: 6px 0 1px; }
-  .on-rule2 { border-bottom: 1px solid ${BRAND}; margin: 0 0 6px; }
-  .on-title { text-align: center; margin: 4px 0 6px; }
-  .on-title span { display: inline-block; background: ${BRAND}; color: #fff; padding: 2px 14px; border-radius: 2px;
-                   font-family: Arial, Helvetica, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; }
-  .on-head { display: flex; justify-content: space-between; font-size: 11px; font-weight: 700; }
-  .on-intro { font-size: 10.5px; font-weight: 700; margin: 5px 0 6px; text-transform: uppercase; }
-  table.on-kv { width: 100%; border-collapse: collapse; border: 1.5px solid ${BRAND}; }
-  table.on-kv td { border: 1px solid ${BRAND}; padding: 3px 7px; vertical-align: top; font-size: 11px; text-transform: uppercase; }
-  table.on-kv td.k { width: 150px; font-weight: 700; background: ${BRAND_TINT}; color: ${BRAND}; }
-  table.on-kv td.v { font-weight: 700; }
-  .on-kv .party { font-weight: 700; font-style: italic; }
-  .on-kv .nominee { font-weight: 400; font-style: italic; padding-left: 14px; }
-  .on-kv .words { font-weight: 400; }
+  /* The logo's lettering is white, so it sits on a navy band, edged in the logo's gold. */
+  .on-logo { background: ${BRAND}; border-bottom: 3px solid ${GOLD}; border-radius: 4px 4px 0 0;
+             padding: 8px 16px; text-align: center; line-height: 0; }
+  .on-logo img { display: inline-block; height: 78px; width: auto; }
+  .on-firm { background: ${BRAND_TINT}; border-radius: 0 0 4px 4px; padding: 5px 10px; text-align: center;
+             font-size: 9px; color: ${MUTED}; letter-spacing: 0.2px; }
+  .on-firm .sep { color: ${GOLD}; padding: 0 6px; }
+  .on-titlebar { display: flex; align-items: flex-end; margin: 10px 0 6px; padding-bottom: 5px; border-bottom: 1.5px solid ${BRAND}; }
+  .on-titlebar .meta { width: 34%; }
+  .on-titlebar .meta.r { text-align: right; }
+  .on-titlebar .lbl { display: block; font-size: 8.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
+  .on-titlebar .val { font-size: 12px; font-weight: 700; color: ${INK}; }
+  .on-titlebar .title { flex: 1; text-align: center; color: ${BRAND}; font-size: 17px; font-weight: 700;
+                        letter-spacing: 4px; text-transform: uppercase; }
+  .on-intro { font-size: 10px; font-style: italic; color: ${MUTED}; margin: 0 0 6px; }
+  table.on-kv { width: 100%; border-collapse: collapse; border: 1px solid ${BRAND}; }
+  table.on-kv td { border: 1px solid ${LINE}; padding: 3.5px 9px; vertical-align: top; font-size: 11px; }
+  table.on-kv td.k { width: 150px; background: ${BRAND_TINT}; color: ${BRAND}; border-right-color: ${BRAND};
+                     font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; padding-top: 5px; }
+  table.on-kv td.v { font-weight: 600; }
+  .on-kv .party { font-weight: 400; color: ${MUTED}; }
+  .on-kv .party.name { font-weight: 700; color: ${INK}; font-size: 11.5px; }
+  .on-kv .nominee { font-weight: 400; font-style: italic; font-size: 9.5px; color: ${MUTED}; margin-top: 2px; }
+  .on-kv .words { font-weight: 400; color: ${MUTED}; }
   table.on-terms { width: 100%; border-collapse: collapse; }
-  table.on-terms td { border: none; padding: 1px 4px 3px; vertical-align: top; font-size: 10.5px; font-weight: 400; text-transform: uppercase; background: none; color: #000; }
-  table.on-terms td.num { width: 22px; text-align: right; font-weight: 700; }
-  .on-foot { margin-top: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; text-align: center; }
-  .on-sign { display: flex; justify-content: flex-end; margin-top: 10px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
-  .on-sign .box { text-align: center; min-width: 200px; }
-  .on-sign .for { color: ${BRAND}; }
-  .on-sign .space { height: 44px; }
-  .on-sign .line { border-top: 1px solid #000; padding-top: 2px; font-size: 10px; font-weight: 400; }
+  table.on-terms td { border: none; padding: 0 2px 3px; vertical-align: top; font-size: 9.5px; font-weight: 400; line-height: 1.45;
+                      background: none; color: ${INK}; text-align: justify; }
+  table.on-terms tr:last-child td { padding-bottom: 0; }
+  table.on-terms td.num { width: 18px; text-align: left; font-weight: 700; color: ${BRAND}; }
+  .on-foot { margin-top: 8px; font-size: 10px; font-style: italic; color: ${MUTED}; text-align: center; }
+  .on-sign { display: flex; justify-content: flex-end; margin-top: 8px; }
+  .on-sign .box { text-align: center; min-width: 210px; }
+  .on-sign .for { color: ${BRAND}; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .on-sign .space { height: 40px; }
+  .on-sign .line { border-top: 1px solid ${INK}; padding-top: 3px; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
   .on-bottom { margin-top: 10px; border-top: 3px solid ${BRAND}; }
+  .on-bottom div { border-top: 1.5px solid ${GOLD}; margin-top: 2px; }
   @media print {
     body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .on { width: auto; padding: 6mm 8mm; }
@@ -162,7 +174,7 @@ function partyBlock(name: string, address: string): string {
   const addr = String(address ?? '')
     .split('\n').map((l) => l.trim()).filter(Boolean)
     .map((l) => `<div class="party">${esc(l)}</div>`).join('');
-  return `<div class="party">${esc(name || '—')}</div>${addr}<div class="nominee">&amp;/OR THEIR NOMINEE</div>`;
+  return `<div class="party name">${esc(name || '—')}</div>${addr}<div class="nominee">&amp;/or their nominee</div>`;
 }
 
 function noteBody(d: NoteData, variant: ContractNoteVariant): string {
@@ -189,7 +201,7 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
     d.firmEmail && `Email Id: ${d.firmEmail}`,
     d.firmPhone && `Mo No: ${d.firmPhone}`,
     d.firmGstin && `GSTIN: ${d.firmGstin}`,
-  ].filter(Boolean).map(esc).join(' &nbsp;|&nbsp; ');
+  ].filter(Boolean).map(esc).join('<span class="sep">•</span>');
 
   const tankTerminal = [d.tank, d.terminal].map((s) => s.trim()).filter(Boolean).join(' / ');
   const firm = d.firmName || 'Ojas Trading';
@@ -197,15 +209,14 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
   return `
   <div class="on">
     <div class="on-logo"><img src="${LOGO_URL}" alt="${esc(firm)}"></div>
-    ${firmLine ? `<div class="on-firm"><div class="addr">${firmLine}</div></div>` : ''}
-    <div class="on-rule"></div><div class="on-rule2"></div>
-    <div class="on-title"><span>CONTRACT NOTE</span></div>
-    <div class="on-head">
-      <span>Contract Note No.: ${esc(d.noteNo || '—')}</span>
-      <span>DATED ${esc(d.date || '—')}.</span>
+    ${firmLine ? `<div class="on-firm">${firmLine}</div>` : ''}
+    <div class="on-titlebar">
+      <div class="meta"><span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span></div>
+      <div class="title">Contract Note</div>
+      <div class="meta r"><span class="lbl">Dated</span><span class="val">${esc(d.date || '—')}</span></div>
     </div>
     <div class="on-intro">Under your instruction and order, we confirm having concluded on account of the parties
-      mentioned below for following transaction on following terms &amp; conditions:</div>
+      mentioned below the following transaction on the following terms &amp; conditions:</div>
     <table class="on-kv">
       ${kv('Sellers', partyBlock(d.sellerName, d.sellerAddress))}
       ${kv('Buyers', partyBlock(d.buyerName, d.buyerAddress))}
@@ -240,7 +251,7 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
         <div class="line">Authorised Signatory</div>
       </div>
     </div>
-    <div class="on-bottom"></div>
+    <div class="on-bottom"><div></div></div>
   </div>`;
 }
 
