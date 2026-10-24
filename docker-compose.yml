@@ -91,11 +91,13 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # NEXT_PUBLIC_* is inlined into the client bundle at build time, so the
+      # browser-facing API URL has to be a build arg (a runtime env var is too late).
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}
     restart: unless-stopped
     depends_on:
       - api
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000/api/v1}
     ports:
       - "${WEB_PORT:-3000}:3000"
 
