@@ -29,13 +29,15 @@ interface NoteData {
   sellerName: string; sellerAddress: string;
   buyerName: string; buyerAddress: string;
   commodity: string; specification: string;
+  // Degum specification, one sub-row each.
+  specFfa: string; specMoisture: string; specSediment: string;
   port: string; payment: string; shipment: string; lifting: string;
   quantity: string; tolerance: string; quantityWords: string;
   price: string; priceWords: string;
   // Degum shipment details — printed only when filled.
   vessel: string; vesselEta: string; clearance: string; tank: string; terminal: string;
-  chain: string; duty: string; paymentDue: string; finalPayment: string;
-  otherTerms: string; // one clause per line
+  duty: string; paymentDue: string;
+  otherTerms: string; // deal-specific clauses, one per line; the standard terms are on page 2
   brokerage: string;
 }
 
@@ -49,9 +51,27 @@ const MUTED = '#5b6475';
 // iframe's srcdoc inherits the app's base URL, so the relative path resolves there too.
 const LOGO_URL = '/brand/contract-note-logo.png';
 
-const TERM_DUTY = 'Any change in duty, tariff, additional duty, Govt. policies etc. on Buyer A/c.';
-const TERM_SURVEYOR = 'Loading must take place under a surveyor’s supervision, failing which we do not take responsibility for any quality issues at the loading port or elsewhere.';
-const TERM_BROKER = 'This contract is entered into subject to the General Terms & Conditions for the purpose of Oils & Fats & the By-laws of the Indian Vegetable Oil Processors Association, Mumbai. Further, we have brought about this contract in our capacity as Broker (Agent) for both the Seller & the Buyer and hence it is subject to the Law of Agency & other contents of the Indian Contract Act 1872, for the time being in force. As we are acting only as Broker, we will not be liable and/or responsible whatsoever for non-performance of contract.';
+// Page 2 of every note: the full General Terms & Conditions, then the short form.
+const GENERAL_TC_INTRO = 'This contract is subject to the applicable General Terms and Conditions for Oils & Fats and the by-laws of the Indian Vegetable Oil Processors Association (IVPA), Mumbai, where applicable and legally enforceable, and the provisions of the Indian Contract Act, 1872, as amended from time to time.';
+const GENERAL_TC: [string, string][] = [
+  ['Broker’s Capacity', 'Rajendra Kumar Arun Kumar Brokerage House (OJAS) (“Broker”) acts solely as an intermediary/agent between Buyer and Seller and is not a principal, guarantor or del credere agent. The Broker does not take title, possession or custody of the goods, or assume any risk relating to quality, quantity, payment, delivery, storage or transportation.'],
+  ['Buyer and Seller’s Responsibility', 'Buyer and Seller shall be solely responsible for performance of their respective obligations, including quality, quantity, packing, loading, delivery, payment, title, statutory documents, taxes and regulatory compliance. The Broker shall not be liable for either party’s breach, default, delay, loss or failure to perform, except to the extent liability cannot lawfully be excluded.'],
+  ['Bargain Confirmation', 'Every bargain confirmed through the Broker and accepted by Buyer and Seller through written communication, including email, WhatsApp or a contract note, shall bind the parties according to the confirmed terms. Any modification must be mutually agreed in writing.'],
+  ['Quality and Quantity', 'Unless otherwise agreed in writing, the certificate/report of the mutually accepted surveyor at loading shall be the agreed basis for determining quality and quantity at loading. The Broker has no physical custody or control of the goods and is not responsible for sampling, testing, shortage, contamination or subsequent deterioration.'],
+  ['Government Duties and Levies', 'Any increase, decrease, imposition, withdrawal or alteration in customs/import/export duty, cess, surcharge, GST, tax, levy, restriction, quota, licensing requirement or other governmental measure arising after bargain confirmation shall be borne by the party legally liable for it, unless Buyer and Seller expressly agree otherwise in writing. The Broker shall have no liability for such changes.'],
+  ['Brokerage and Cancellation', 'Brokerage shall be payable at the rate agreed in the bargain confirmation. If a confirmed bargain is cancelled or repudiated, half of the agreed brokerage shall be payable; if the parties settle or compromise the transaction following such cancellation or default, double brokerage shall be payable, subject to applicable law and the agreed brokerage terms.'],
+  ['Indemnity', 'Buyer and Seller shall indemnify and hold harmless the Broker against claims, losses, liabilities, costs and expenses arising from their respective breach, default, negligence, misrepresentation or violation of law, except to the extent caused by the Broker’s own fraud, wilful misconduct or liability that cannot lawfully be excluded.'],
+  ['Disputes and Jurisdiction', 'The Broker shall not act as adjudicator of disputes between Buyer and Seller; its bargain records and communications may be relied upon as evidence. The Broker may act as a witness where legally required. This contract shall be governed by Indian law, and courts at Gwalior, Madhya Pradesh, shall have jurisdiction to the extent legally permissible.'],
+  ['Force Majeure', 'Neither Buyer nor Seller shall be responsible for a failure or delay to the extent caused by events beyond its reasonable control, subject to applicable law and the agreed contract terms. This shall not automatically extinguish brokerage already earned.'],
+];
+const SHORT_TC = [
+  'Subject to applicable IVPA General Terms & Conditions for Oils & Fats, its by-laws and the Indian Contract Act, 1872.',
+  'The Broker acts solely as an agent/intermediary for Buyer and Seller, without taking title or custody of goods.',
+  'Loading shall be under the agreed surveyor’s supervision; quality and quantity shall be as per the surveyor’s report at loading.',
+  'Changes in duties, tariffs, taxes or government policies shall be borne as agreed in the bargain and under applicable law. Buyer and Seller shall fulfil their confirmed contractual obligations.',
+  'Cancellation attracts half brokerage; settlement following cancellation/default attracts double brokerage, subject to applicable law. Buyer and Seller shall indemnify the Broker against claims arising from their breach or default, subject to applicable law.',
+  'Disputes between Buyer and Seller shall be resolved between them. Indian law applies; Gwalior courts shall have jurisdiction where legally permissible.',
+];
 
 const DEFAULT_DEGUM_LIFTING =
   '10 days from PHO date or from the date of receipt of tank terminal details, whichever is later.';
@@ -155,7 +175,21 @@ function noteStyle(): string {
                       background: none; color: ${INK}; text-align: justify; }
   table.on-terms tr:last-child td { padding-bottom: 0; }
   table.on-terms td.num { width: 18px; text-align: left; font-weight: 700; color: ${BRAND}; }
+  table.on-spec { border-collapse: collapse; }
+  table.on-spec td { border: none; padding: 0 0 1px; font-size: 11px; font-weight: 600; background: none; }
+  table.on-spec td.sk { width: 150px; padding-right: 10px; font-weight: 400; color: ${MUTED}; }
   .on-foot { margin-top: 8px; font-size: 10px; font-style: italic; color: ${MUTED}; text-align: center; }
+  .on-foot div + div { margin-top: 2px; }
+  /* Page 2: the standing terms. Starts on a new sheet in the print and the PDF. */
+  .on-p2 { break-before: page; page-break-before: always; }
+  .on-top { border-top: 3px solid ${BRAND}; }
+  .on-top div { border-top: 1.5px solid ${GOLD}; margin-top: 2px; }
+  .on-titlebar .title.sm { font-size: 14px; letter-spacing: 2.5px; }
+  .on-tc-h { margin: 12px 0 5px; padding-bottom: 3px; border-bottom: 1px solid ${LINE};
+             color: ${BRAND}; font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+  .on-tc-lead { margin: 0 0 5px; font-size: 9.5px; line-height: 1.45; text-align: justify; }
+  table.on-terms td b { font-weight: 700; color: ${BRAND}; }
+  .on-pageno { margin-top: 10px; font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; text-align: right; }
   .on-sign { display: flex; justify-content: flex-end; margin-top: 8px; }
   .on-sign .box { text-align: center; min-width: 210px; }
   .on-sign .for { color: ${BRAND}; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -177,7 +211,20 @@ function partyBlock(name: string, address: string): string {
   return `<div class="party name">${esc(name || '—')}</div>${addr}<div class="nominee">&amp;/or their nominee</div>`;
 }
 
-function noteBody(d: NoteData, variant: ContractNoteVariant): string {
+function termsTable(rows: string[]): string {
+  return `<table class="on-terms">${rows.map((t, i) => `<tr><td class="num">${i + 1}</td><td>${t}</td></tr>`).join('')}</table>`;
+}
+
+function titleBar(d: NoteData, title: string, cls = ''): string {
+  return `
+    <div class="on-titlebar">
+      <div class="meta"><span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span></div>
+      <div class="title ${cls}">${title}</div>
+      <div class="meta r"><span class="lbl">Dated</span><span class="val">${esc(d.date || '—')}</span></div>
+    </div>`;
+}
+
+function notePage1(d: NoteData, variant: ContractNoteVariant): string {
   const kv = (k: string, v: string) => `<tr><td class="k">${esc(k)}</td><td class="v">${v}</td></tr>`;
   // Optional rows (degum shipment details) are left out of the print when blank.
   const opt = (k: string, v: string) => (v.trim() ? kv(k, esc(v)) : '');
@@ -192,9 +239,15 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
   ].filter(Boolean).join(' ');
 
   const terms = d.otherTerms.split('\n').map((t) => t.trim()).filter(Boolean);
-  const termsHtml = terms.length
-    ? `<table class="on-terms">${terms.map((t, i) => `<tr><td class="num">${i + 1}</td><td>${esc(t)}</td></tr>`).join('')}</table>`
-    : '—';
+  const termsHtml = terms.length ? termsTable(terms.map(esc)) : 'As per the Terms &amp; Conditions on page 2.';
+
+  const spec = variant === 'degum'
+    ? `<table class="on-spec">${[
+        ['FFA', d.specFfa],
+        ['Moisture &amp; Impurities', d.specMoisture],
+        ['Sediment', d.specSediment],
+      ].map(([k, v]) => `<tr><td class="sk">${k}</td><td>${esc(v.trim() || '—')}</td></tr>`).join('')}</table>`
+    : esc(d.specification || '—');
 
   const firmLine = [
     d.firmAddress && `Address: ${d.firmAddress}`,
@@ -210,18 +263,14 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
   <div class="on">
     <div class="on-logo"><img src="${LOGO_URL}" alt="${esc(firm)}"></div>
     ${firmLine ? `<div class="on-firm">${firmLine}</div>` : ''}
-    <div class="on-titlebar">
-      <div class="meta"><span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span></div>
-      <div class="title">Contract Note</div>
-      <div class="meta r"><span class="lbl">Dated</span><span class="val">${esc(d.date || '—')}</span></div>
-    </div>
+    ${titleBar(d, 'Contract Note')}
     <div class="on-intro">Under your instruction and order, we confirm having concluded on account of the parties
       mentioned below the following transaction on the following terms &amp; conditions:</div>
     <table class="on-kv">
       ${kv('Sellers', partyBlock(d.sellerName, d.sellerAddress))}
       ${kv('Buyers', partyBlock(d.buyerName, d.buyerAddress))}
       ${kv('Commodity', esc(d.commodity || '—'))}
-      ${kv('Specification', esc(d.specification || '—'))}
+      ${kv('Specification', spec)}
       ${kv('Port', esc(d.port || '—'))}
       ${kv('Payment', esc(d.payment || '—'))}
       ${kv('Shipment', esc(d.shipment || '—'))}
@@ -230,20 +279,21 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
         opt('Tentative Arrival', d.vesselEta),
         opt('Actual Clearance', d.clearance),
         opt('Tank / Terminal', tankTerminal),
-        opt('Chain', d.chain),
       ].join('') : ''}
       ${kv('Lifting', esc(d.lifting || '—'))}
       ${kv('Quantity', qtyLine || '—')}
-      ${kv(variant === 'degum' ? 'Approx Parity Price (Rs.)' : 'Rate (Rs.)', priceLine || '—')}
+      ${kv(variant === 'degum' ? 'Price (Rs.)' : 'Rate (Rs.)', priceLine || '—')}
       ${variant === 'degum' ? [
         opt('Duty', d.duty),
         opt('Payment Due', d.paymentDue),
-        opt('Final Payment', d.finalPayment),
       ].join('') : ''}
       ${kv('Other Terms', termsHtml)}
       ${kv('Brokerage', esc(d.brokerage || '—'))}
     </table>
-    <div class="on-foot">Our detailed contract note no. ${esc(d.noteNo || '—')} dated ${esc(d.date || '—')} follows.</div>
+    <div class="on-foot">
+      <div>Our detailed contract note no. ${esc(d.noteNo || '—')} dated ${esc(d.date || '—')} follows.</div>
+      <div>This contract is subject to the Terms &amp; Conditions on page 2, which form part of it.</div>
+    </div>
     <div class="on-sign">
       <div class="box">
         <div class="for">For ${esc(firm)}</div>
@@ -252,7 +302,28 @@ function noteBody(d: NoteData, variant: ContractNoteVariant): string {
       </div>
     </div>
     <div class="on-bottom"><div></div></div>
+    <div class="on-pageno">Page 1 of 2</div>
   </div>`;
+}
+
+function notePage2(d: NoteData): string {
+  return `
+  <div class="on on-p2">
+    <div class="on-top"><div></div></div>
+    ${titleBar(d, 'Terms &amp; Conditions', 'sm')}
+    <div class="on-tc-h">General Terms &amp; Conditions</div>
+    <p class="on-tc-lead">${esc(GENERAL_TC_INTRO)}</p>
+    ${termsTable(GENERAL_TC.map(([k, v]) => `<b>${esc(k)}:</b> ${esc(v)}`))}
+    <div class="on-tc-h">Terms &amp; Conditions</div>
+    ${termsTable(SHORT_TC.map(esc))}
+    <div class="on-bottom"><div></div></div>
+    <div class="on-pageno">Page 2 of 2</div>
+  </div>`;
+}
+
+/** Both pages, for the print and the PDF. */
+function noteBody(d: NoteData, variant: ContractNoteVariant): string {
+  return notePage1(d, variant) + notePage2(d);
 }
 
 function printNote(d: NoteData, variant: ContractNoteVariant) {
@@ -288,6 +359,7 @@ async function notePdf(d: NoteData, variant: ContractNoteVariant): Promise<Blob>
         image: { type: 'jpeg', quality: 0.95 },
         html2canvas: { scale: 2, backgroundColor: '#ffffff' },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        // Page 2 (.on-p2) starts a new sheet via html2pdf's default 'css' pagebreak mode.
       })
       .from(html)
       .outputPdf('blob');
@@ -406,7 +478,8 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
   // there is a deposit (as in the sample), else on the payment line itself.
   const payment = [d.paymentCondition, !deposit && due && `due by ${due}`].filter(Boolean).join(', ');
 
-  const terms = degum ? [TERM_DUTY, TERM_SURVEYOR, TERM_BROKER] : [TERM_DUTY, TERM_BROKER];
+  // Only deal-specific clauses here; the standing terms print on page 2.
+  const terms: string[] = [];
   if (deposit > 0) terms.push(`Deposit of ${rs(deposit)} will be applicable${due ? ` and is due by ${due}` : ''}.`);
 
   const brokerage = [
@@ -414,7 +487,6 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
     Number(d.sellerBrokerage) > 0 && `Seller ${rs(d.sellerBrokerage)} PMT`,
   ].filter(Boolean).join(' · ');
 
-  const pay = d.payment; // degum final payment, calculated by the API
   const paymentDue = g.paymentDueDate
     ? `${dmy(g.paymentDueDate)}${g.paymentDueDays ? ` (${g.paymentDueDays} days from clearance)` : ''}`
     : g.paymentDueDays ? `${g.paymentDueDays} days from clearance` : '';
@@ -433,6 +505,9 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
     buyerAddress: partyAddress(d.buyerParty),
     commodity: d.product?.name ?? d.product?.code ?? '',
     specification: '',
+    specFfa: '',
+    specMoisture: '',
+    specSediment: '',
     port: d.port ?? '',
     payment,
     shipment: d.shipmentMonth ? `${d.shipmentMonth} Shipment` : '',
@@ -447,12 +522,8 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
     clearance: dmy(g.clearanceDate),
     tank: g.tank ?? '',
     terminal: g.terminal ?? '',
-    chain: g.chain ?? '',
     duty: g.duty != null ? `Rs. ${formatNumber(Number(g.duty), 2)} per MT` : '',
     paymentDue,
-    finalPayment: pay?.netPayable != null
-      ? `Rs. ${formatNumber(Number(pay.netPayable), 2)} (net of deposit, incl. 5% GST, less 0.1% TDS)`
-      : '',
     otherTerms: terms.join('\n'),
     brokerage: brokerage ? `${brokerage} (plus applicable GST)` : '',
   };
@@ -478,6 +549,8 @@ export function ContractNoteModal({
   const initial = useMemo(() => buildNote(deal, companyQ.data, variant), [deal, companyQ.data, variant]);
   const [data, setData] = useState<NoteData>(initial);
   useEffect(() => setData(initial), [initial]);
+  const [page, setPage] = useState(0); // previewed page
+  useEffect(() => setPage(0), [deal]);
 
   // Email: buyer + seller pre-filled from master data, all editable.
   const canEmail = useAuth((s) => s.can('deal:email'));
@@ -587,10 +660,15 @@ export function ContractNoteModal({
               <div className="mt-3">{area('Address', 'buyerAddress', 2, 'One line per row')}</div>
             </>)}
 
-            <div className="grid grid-cols-1 gap-3">
-              {field('Commodity', 'commodity')}
-              {field('Specification', 'specification', 'e.g. FFA below 1%, acceptable with a single rebate 1-2%')}
-            </div>
+            {field('Commodity', 'commodity')}
+
+            {degum ? section('Specification', (
+              <div className="grid grid-cols-1 gap-3">
+                {field('FFA', 'specFfa', 'e.g. 3% max')}
+                {field('Moisture & Impurities', 'specMoisture', 'e.g. 0.5% max')}
+                {field('Sediment', 'specSediment', 'e.g. 0.1% max')}
+              </div>
+            )) : field('Specification', 'specification', 'e.g. FFA below 1%, acceptable with a single rebate 1-2%')}
 
             <div className="grid grid-cols-2 gap-3">
               {field('Port', 'port', 'e.g. Ex Tank Kandla')}
@@ -608,7 +686,7 @@ export function ContractNoteModal({
               </div>
               <div className="mt-3 grid grid-cols-1 gap-3">
                 {field('Quantity in words', 'quantityWords')}
-                {field(degum ? 'Approx Parity Price' : 'Rate', 'price')}
+                {field(degum ? 'Price' : 'Rate', 'price')}
                 {field('Price in words', 'priceWords')}
               </div>
             </>)}
@@ -618,16 +696,15 @@ export function ContractNoteModal({
                 {field('Vessel', 'vessel')}
                 {field('Tentative Arrival', 'vesselEta', 'dd.mm.yyyy')}
                 {field('Actual Clearance', 'clearance', 'dd.mm.yyyy')}
-                {field('Chain', 'chain')}
+                {field('Duty', 'duty')}
                 {field('Tank', 'tank')}
                 {field('Terminal', 'terminal')}
-                {field('Duty', 'duty')}
-                {field('Payment Due', 'paymentDue')}
-                <div className="col-span-2">{field('Final Payment', 'finalPayment')}</div>
+                <div className="col-span-2">{field('Payment Due', 'paymentDue')}</div>
               </div>
             ), true)}
 
-            {area('Other Terms (one clause per line)', 'otherTerms', 6)}
+            {area('Other Terms — deal-specific, one clause per line', 'otherTerms', 2,
+              'The standard Terms & Conditions print on page 2')}
 
             {emailOpen && (
               <div ref={emailRef} className="scroll-mt-5 space-y-3 rounded-md border border-primary/40 bg-muted/30 p-3">
@@ -667,9 +744,25 @@ export function ContractNoteModal({
             )}
           </div>
 
-          {/* Live preview — the whole page, scaled to fit */}
-          <div className="border-t border-border bg-muted/40 p-5 lg:min-h-0 lg:border-t-0">
-            <NotePreview html={`<style>${noteStyle()}</style>${noteBody(data, variant)}`} />
+          {/* Live preview — one whole page at a time, scaled to fit */}
+          <div className="flex flex-col gap-3 border-t border-border bg-muted/40 p-5 lg:min-h-0 lg:border-t-0">
+            <div className="flex justify-center">
+              <div className="inline-flex rounded-md border border-border bg-background p-0.5 text-xs">
+                {(['Page 1 · Note', 'Page 2 · Terms'] as const).map((label, i) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={`rounded px-3 py-1 ${page === i ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setPage(i)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="min-h-0 flex-1">
+              <NotePreview html={`<style>${noteStyle()}</style>${page === 0 ? notePage1(data, variant) : notePage2(data)}`} />
+            </div>
           </div>
         </div>
 
