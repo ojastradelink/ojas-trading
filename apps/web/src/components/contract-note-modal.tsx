@@ -24,7 +24,7 @@ export type ContractNoteVariant = 'direct' | 'degum';
 // note (JDM/2627062002), under Ojas branding. Everything the deal (and, for
 // degum, its shipment record) holds is pre-filled; all of it stays editable.
 interface NoteData {
-  firmName: string; firmAddress: string; firmEmail: string; firmPhone: string; firmGstin: string;
+  firmName: string; firmAddress: string; firmEmail: string; firmPhone: string; firmMobile: string;
   noteNo: string; date: string;
   sellerName: string; sellerAddress: string;
   buyerName: string; buyerAddress: string;
@@ -35,7 +35,7 @@ interface NoteData {
   quantity: string; tolerance: string; quantityWords: string;
   price: string; priceWords: string;
   // Degum shipment details — printed only when filled.
-  vessel: string; vesselEta: string; clearance: string; tank: string; terminal: string;
+  tank: string; terminal: string;
   duty: string; paymentDue: string;
   otherTerms: string; // deal-specific clauses, one per line; the standard terms are on page 2
   brokerage: string;
@@ -44,14 +44,24 @@ interface NoteData {
 const BRAND = '#2a4074'; // the app's primary navy (hsl 222 47% 31%)
 const BRAND_TINT = '#f1f4fa';
 const GOLD = '#e2a900'; // the logo's oil-drop gold
-const LINE = '#cfd6e4';
+// A4, with a 6mm margin all round in the preview, the print and the PDF.
+const PAGE_MARGIN_MM = 6;
+const PAGE_W = '210mm';
+const CONTENT_W = `${210 - 2 * PAGE_MARGIN_MM}mm`;
 const INK = '#1a1f2b';
 const MUTED = '#5b6475';
 // Ojas + Rajendra Kumar Arun Kumar letterhead (apps/web/public). The print
 // iframe's srcdoc inherits the app's base URL, so the relative path resolves there too.
 const LOGO_URL = '/brand/contract-note-logo.png';
+// Letterhead contact line — fixed for the notes, independent of Settings › Company.
+const LETTERHEAD = {
+  address: 'Dal Bazar, Lashkar, Gwalior - 474009',
+  email: 'work.ojastradelink@gmail.com',
+  phone: '07514076634',
+  mobile: '9827024412, 9425781805',
+};
 
-// Page 2 of every note: the full General Terms & Conditions, then the short form.
+// Page 2 of every note: the General Terms & Conditions.
 const GENERAL_TC_INTRO = 'This contract is subject to the applicable General Terms and Conditions for Oils & Fats and the by-laws of the Indian Vegetable Oil Processors Association (IVPA), Mumbai, where applicable and legally enforceable, and the provisions of the Indian Contract Act, 1872, as amended from time to time.';
 const GENERAL_TC: [string, string][] = [
   ['Broker’s Capacity', 'Rajendra Kumar Arun Kumar Brokerage House (OJAS) (“Broker”) acts solely as an intermediary/agent between Buyer and Seller and is not a principal, guarantor or del credere agent. The Broker does not take title, possession or custody of the goods, or assume any risk relating to quality, quantity, payment, delivery, storage or transportation.'],
@@ -63,14 +73,6 @@ const GENERAL_TC: [string, string][] = [
   ['Indemnity', 'Buyer and Seller shall indemnify and hold harmless the Broker against claims, losses, liabilities, costs and expenses arising from their respective breach, default, negligence, misrepresentation or violation of law, except to the extent caused by the Broker’s own fraud, wilful misconduct or liability that cannot lawfully be excluded.'],
   ['Disputes and Jurisdiction', 'The Broker shall not act as adjudicator of disputes between Buyer and Seller; its bargain records and communications may be relied upon as evidence. The Broker may act as a witness where legally required. This contract shall be governed by Indian law, and courts at Gwalior, Madhya Pradesh, shall have jurisdiction to the extent legally permissible.'],
   ['Force Majeure', 'Neither Buyer nor Seller shall be responsible for a failure or delay to the extent caused by events beyond its reasonable control, subject to applicable law and the agreed contract terms. This shall not automatically extinguish brokerage already earned.'],
-];
-const SHORT_TC = [
-  'Subject to applicable IVPA General Terms & Conditions for Oils & Fats, its by-laws and the Indian Contract Act, 1872.',
-  'The Broker acts solely as an agent/intermediary for Buyer and Seller, without taking title or custody of goods.',
-  'Loading shall be under the agreed surveyor’s supervision; quality and quantity shall be as per the surveyor’s report at loading.',
-  'Changes in duties, tariffs, taxes or government policies shall be borne as agreed in the bargain and under applicable law. Buyer and Seller shall fulfil their confirmed contractual obligations.',
-  'Cancellation attracts half brokerage; settlement following cancellation/default attracts double brokerage, subject to applicable law. Buyer and Seller shall indemnify the Broker against claims arising from their breach or default, subject to applicable law.',
-  'Disputes between Buyer and Seller shall be resolved between them. Indian law applies; Gwalior courts shall have jurisdiction where legally permissible.',
 ];
 
 const DEFAULT_DEGUM_LIFTING =
@@ -143,63 +145,65 @@ function withMs(name: string): string {
 
 function noteStyle(): string {
   return `
-  .on { box-sizing: border-box; width: 190mm; margin: 0 auto; padding: 8mm 10mm; background: #fff; color: ${INK};
-        font-family: Arial, Helvetica, sans-serif; font-size: 11px; line-height: 1.4; }
+  /* On screen .on is a whole A4 sheet; its 6mm padding is the print/PDF page margin. */
+  .on { box-sizing: border-box; width: ${PAGE_W}; margin: 0 auto; padding: ${PAGE_MARGIN_MM}mm; background: #fff; color: ${INK};
+        font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; line-height: 1.4; }
   .on * { box-sizing: border-box; }
   /* The logo's lettering is white, so it sits on a navy band, edged in the logo's gold. */
   .on-logo { background: ${BRAND}; border-bottom: 3px solid ${GOLD}; border-radius: 4px 4px 0 0;
              padding: 8px 16px; text-align: center; line-height: 0; }
   .on-logo img { display: inline-block; height: 78px; width: auto; }
   .on-firm { background: ${BRAND_TINT}; border-radius: 0 0 4px 4px; padding: 5px 10px; text-align: center;
-             font-size: 9px; color: ${MUTED}; letter-spacing: 0.2px; }
+             font-size: 10.5px; color: ${MUTED}; letter-spacing: 0.2px; }
   .on-firm .sep { color: ${GOLD}; padding: 0 6px; }
   .on-titlebar { display: flex; align-items: flex-end; margin: 10px 0 6px; padding-bottom: 5px; border-bottom: 1.5px solid ${BRAND}; }
   .on-titlebar .meta { width: 34%; }
   .on-titlebar .meta.r { text-align: right; }
-  .on-titlebar .lbl { display: block; font-size: 8.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
-  .on-titlebar .val { font-size: 12px; font-weight: 700; color: ${INK}; }
-  .on-titlebar .title { flex: 1; text-align: center; color: ${BRAND}; font-size: 17px; font-weight: 700;
+  .on-titlebar .lbl { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
+  .on-titlebar .val { font-size: 13.5px; font-weight: 700; color: ${INK}; }
+  .on-titlebar .title { flex: 1; text-align: center; color: ${BRAND}; font-size: 19px; font-weight: 700;
                         letter-spacing: 4px; text-transform: uppercase; }
-  .on-intro { font-size: 10px; font-style: italic; color: ${MUTED}; margin: 0 0 6px; }
+  .on-intro { font-size: 11.5px; font-style: italic; color: ${MUTED}; margin: 0 0 6px; }
   table.on-kv { width: 100%; border-collapse: collapse; border: 1px solid ${BRAND}; }
-  table.on-kv td { border: 1px solid ${LINE}; padding: 3.5px 9px; vertical-align: top; font-size: 11px; }
-  table.on-kv td.k { width: 150px; background: ${BRAND_TINT}; color: ${BRAND}; border-right-color: ${BRAND};
-                     font-size: 9px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; padding-top: 5px; }
+  table.on-kv td { border: 1px solid ${BRAND}; padding: 4px 9px; vertical-align: top; font-size: 12.5px; }
+  table.on-kv td.k { width: 165px; background: ${BRAND_TINT}; color: ${BRAND};
+                     font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; padding-top: 6px; }
   table.on-kv td.v { font-weight: 600; }
   .on-kv .party { font-weight: 400; color: ${MUTED}; }
-  .on-kv .party.name { font-weight: 700; color: ${INK}; font-size: 11.5px; }
-  .on-kv .nominee { font-weight: 400; font-style: italic; font-size: 9.5px; color: ${MUTED}; margin-top: 2px; }
+  .on-kv .party.name { font-weight: 700; color: ${INK}; font-size: 13px; }
+  .on-kv .nominee { font-weight: 400; font-style: italic; font-size: 10.5px; color: ${MUTED}; margin-top: 2px; }
   .on-kv .words { font-weight: 400; color: ${MUTED}; }
   table.on-terms { width: 100%; border-collapse: collapse; }
-  table.on-terms td { border: none; padding: 0 2px 3px; vertical-align: top; font-size: 9.5px; font-weight: 400; line-height: 1.45;
+  table.on-terms td { border: none; padding: 0 2px 4px; vertical-align: top; font-size: 12px; font-weight: 400; line-height: 1.45;
                       background: none; color: ${INK}; text-align: justify; }
   table.on-terms tr:last-child td { padding-bottom: 0; }
-  table.on-terms td.num { width: 18px; text-align: left; font-weight: 700; color: ${BRAND}; }
+  table.on-terms td.num { width: 20px; text-align: left; font-weight: 700; color: ${BRAND}; }
   table.on-spec { border-collapse: collapse; }
-  table.on-spec td { border: none; padding: 0 0 1px; font-size: 11px; font-weight: 600; background: none; }
-  table.on-spec td.sk { width: 150px; padding-right: 10px; font-weight: 400; color: ${MUTED}; }
-  .on-foot { margin-top: 8px; font-size: 10px; font-style: italic; color: ${MUTED}; text-align: center; }
-  .on-foot div + div { margin-top: 2px; }
+  table.on-spec td { border: none; padding: 0 0 1px; font-size: 12.5px; font-weight: 600; background: none; }
+  table.on-spec td.sk { width: 170px; padding-right: 10px; font-weight: 400; color: ${MUTED}; }
+  .on-foot { margin-top: 8px; font-size: 11.5px; font-style: italic; color: ${MUTED}; text-align: left; }
   /* Page 2: the standing terms. Starts on a new sheet in the print and the PDF. */
   .on-p2 { break-before: page; page-break-before: always; }
   .on-top { border-top: 3px solid ${BRAND}; }
   .on-top div { border-top: 1.5px solid ${GOLD}; margin-top: 2px; }
-  .on-titlebar .title.sm { font-size: 14px; letter-spacing: 2.5px; }
-  .on-tc-h { margin: 12px 0 5px; padding-bottom: 3px; border-bottom: 1px solid ${LINE};
-             color: ${BRAND}; font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
-  .on-tc-lead { margin: 0 0 5px; font-size: 9.5px; line-height: 1.45; text-align: justify; }
+  .on-titlebar .title.sm { font-size: 16px; letter-spacing: 2.5px; }
+  .on-tc-h { margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid ${BRAND};
+             color: ${BRAND}; font-size: 12.5px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+  .on-tc-lead { margin: 0 0 6px; font-size: 12px; line-height: 1.45; text-align: justify; }
+  .on-p2 table.on-terms td { padding-bottom: 6px; }
   table.on-terms td b { font-weight: 700; color: ${BRAND}; }
-  .on-pageno { margin-top: 10px; font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; text-align: right; }
+  .on-pageno { margin-top: 10px; font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; text-align: right; }
   .on-sign { display: flex; justify-content: flex-end; margin-top: 8px; }
-  .on-sign .box { text-align: center; min-width: 210px; }
-  .on-sign .for { color: ${BRAND}; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .on-sign .box { text-align: center; min-width: 220px; }
+  .on-sign .for { color: ${BRAND}; font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
   .on-sign .space { height: 40px; }
-  .on-sign .line { border-top: 1px solid ${INK}; padding-top: 3px; font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
+  .on-sign .line { border-top: 1px solid ${INK}; padding-top: 3px; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
   .on-bottom { margin-top: 10px; border-top: 3px solid ${BRAND}; }
   .on-bottom div { border-top: 1.5px solid ${GOLD}; margin-top: 2px; }
+  @page { size: A4; margin: ${PAGE_MARGIN_MM}mm; }
   @media print {
     body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .on { width: auto; padding: 6mm 8mm; }
+    .on { width: auto; padding: 0; }
   }
   `;
 }
@@ -251,9 +255,9 @@ function notePage1(d: NoteData, variant: ContractNoteVariant): string {
 
   const firmLine = [
     d.firmAddress && `Address: ${d.firmAddress}`,
-    d.firmEmail && `Email Id: ${d.firmEmail}`,
-    d.firmPhone && `Mo No: ${d.firmPhone}`,
-    d.firmGstin && `GSTIN: ${d.firmGstin}`,
+    d.firmEmail && `Email: ${d.firmEmail}`,
+    d.firmPhone && `Phone: ${d.firmPhone}`,
+    d.firmMobile && `Mobile: ${d.firmMobile}`,
   ].filter(Boolean).map(esc).join('<span class="sep">•</span>');
 
   const tankTerminal = [d.tank, d.terminal].map((s) => s.trim()).filter(Boolean).join(' / ');
@@ -274,12 +278,7 @@ function notePage1(d: NoteData, variant: ContractNoteVariant): string {
       ${kv('Port', esc(d.port || '—'))}
       ${kv('Payment', esc(d.payment || '—'))}
       ${kv('Shipment', esc(d.shipment || '—'))}
-      ${variant === 'degum' ? [
-        opt('Vessel', d.vessel),
-        opt('Tentative Arrival', d.vesselEta),
-        opt('Actual Clearance', d.clearance),
-        opt('Tank / Terminal', tankTerminal),
-      ].join('') : ''}
+      ${variant === 'degum' ? opt('Tank / Terminal', tankTerminal) : ''}
       ${kv('Lifting', esc(d.lifting || '—'))}
       ${kv('Quantity', qtyLine || '—')}
       ${kv(variant === 'degum' ? 'Price (Rs.)' : 'Rate (Rs.)', priceLine || '—')}
@@ -290,10 +289,7 @@ function notePage1(d: NoteData, variant: ContractNoteVariant): string {
       ${kv('Other Terms', termsHtml)}
       ${kv('Brokerage', esc(d.brokerage || '—'))}
     </table>
-    <div class="on-foot">
-      <div>Our detailed contract note no. ${esc(d.noteNo || '—')} dated ${esc(d.date || '—')} follows.</div>
-      <div>This contract is subject to the Terms &amp; Conditions on page 2, which form part of it.</div>
-    </div>
+    <div class="on-foot">This contract is subject to the Terms &amp; Conditions on page 2, which form part of it.</div>
     <div class="on-sign">
       <div class="box">
         <div class="for">For ${esc(firm)}</div>
@@ -314,8 +310,6 @@ function notePage2(d: NoteData): string {
     <div class="on-tc-h">General Terms &amp; Conditions</div>
     <p class="on-tc-lead">${esc(GENERAL_TC_INTRO)}</p>
     ${termsTable(GENERAL_TC.map(([k, v]) => `<b>${esc(k)}:</b> ${esc(v)}`))}
-    <div class="on-tc-h">Terms &amp; Conditions</div>
-    ${termsTable(SHORT_TC.map(esc))}
     <div class="on-bottom"><div></div></div>
     <div class="on-pageno">Page 2 of 2</div>
   </div>`;
@@ -345,7 +339,7 @@ function printNote(d: NoteData, variant: ContractNoteVariant) {
 /** The note as an A4 PDF — same template as the preview and the print. */
 async function notePdf(d: NoteData, variant: ContractNoteVariant): Promise<Blob> {
   const html2pdf = (await import('html2pdf.js')).default; // browser-only; keep it out of SSR
-  const html = `<div><style>${noteStyle()} .on { width: 190mm; padding: 0; }</style>${noteBody(d, variant)}</div>`;
+  const html = `<div><style>${noteStyle()} .on { width: ${CONTENT_W}; padding: 0; }</style>${noteBody(d, variant)}</div>`;
   // Tailwind's preflight `img { display: block }` skews html2canvas's font-baseline
   // probe (an <img> in the live document), drawing all text too low so it clips into
   // the table borders. Undo it just for the capture.
@@ -355,7 +349,7 @@ async function notePdf(d: NoteData, variant: ContractNoteVariant): Promise<Blob>
   try {
     return await html2pdf()
       .set({
-        margin: [8, 10, 8, 10],
+        margin: PAGE_MARGIN_MM,
         image: { type: 'jpeg', quality: 0.95 },
         html2canvas: { scale: 2, backgroundColor: '#ffffff' },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -421,7 +415,7 @@ function autoGrow(el: HTMLTextAreaElement | null) {
 }
 
 /**
- * The note at its real print width (190mm), scaled down to fit its column.
+ * The note as a real A4 sheet (210mm wide), scaled down to fit its column.
  * Side by side (lg+) it also fits the height, so the whole page is always in
  * view and the preview never needs its own scrollbar; stacked on small screens
  * it fits the width and scrolls with the form.
@@ -456,7 +450,7 @@ function NotePreview({ html }: { html: string }) {
         <div
           ref={pageRef}
           className="bg-white shadow-sm ring-1 ring-border"
-          style={{ width: '190mm', transform: `scale(${fit.scale})`, transformOrigin: 'top left' }}
+          style={{ width: PAGE_W, transform: `scale(${fit.scale})`, transformOrigin: 'top left' }}
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </div>
@@ -493,10 +487,10 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
 
   return {
     firmName: c?.legalName || c?.name || 'Ojas Trading',
-    firmAddress: [c?.addressLine, c?.city, [c?.state, c?.pincode].filter(Boolean).join('-')].filter(Boolean).join(', '),
-    firmEmail: c?.email ?? '',
-    firmPhone: c?.phone ?? '',
-    firmGstin: c?.gstin ?? '',
+    firmAddress: LETTERHEAD.address,
+    firmEmail: LETTERHEAD.email,
+    firmPhone: LETTERHEAD.phone,
+    firmMobile: LETTERHEAD.mobile,
     noteNo: d.dealNo ?? '',
     date: dmy(d.date),
     sellerName: withMs(d.sellerParty?.name ?? ''),
@@ -517,9 +511,6 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
     quantityWords: qty != null && Number.isInteger(qty) ? `${inWords(qty)} MTs` : '',
     price: rate != null ? `Rs. ${formatNumber(rate, 2)} per MT${degum ? ' + Duty / IGST' : ''}` : '',
     priceWords: rate != null && Number.isInteger(rate) ? `Rupees ${inWords(rate)} only` : '',
-    vessel: g.vesselName ?? '',
-    vesselEta: dmy(g.vesselEta),
-    clearance: dmy(g.clearanceDate),
     tank: g.tank ?? '',
     terminal: g.terminal ?? '',
     duty: g.duty != null ? `Rs. ${formatNumber(Number(g.duty), 2)} per MT` : '',
@@ -693,13 +684,10 @@ export function ContractNoteModal({
 
             {degum && section('Shipment details (printed when filled)', (
               <div className="grid grid-cols-2 gap-3">
-                {field('Vessel', 'vessel')}
-                {field('Tentative Arrival', 'vesselEta', 'dd.mm.yyyy')}
-                {field('Actual Clearance', 'clearance', 'dd.mm.yyyy')}
-                {field('Duty', 'duty')}
                 {field('Tank', 'tank')}
                 {field('Terminal', 'terminal')}
-                <div className="col-span-2">{field('Payment Due', 'paymentDue')}</div>
+                {field('Duty', 'duty')}
+                {field('Payment Due', 'paymentDue')}
               </div>
             ), true)}
 
