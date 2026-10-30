@@ -12,6 +12,7 @@ import { DealsModule } from './deals/deals.module';
 import { DegumModule } from './degum/degum.module';
 import { TradingModule } from './trading/trading.module';
 import { HealthController } from './health/health.controller';
+import { InboxModule } from './inbox/inbox.module';
 import { MailModule } from './mail/mail.module';
 import { MasterDataModule } from './master-data/master-data.module';
 import { NumberingModule } from './numbering/numbering.module';
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     NumberingModule,
     AuditModule,
     MailModule,
+    InboxModule,
     AuthModule,
     UsersModule,
     MasterDataModule,

@@ -2,6 +2,7 @@
 
 import {
   Handshake,
+  Inbox,
   LayoutDashboard,
   Package,
   Settings,
@@ -14,12 +15,15 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
+import { useAuth } from '@/lib/auth-store';
 import { cn } from '@/lib/utils';
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** Shown only to users with this permission. */
+  perm?: string;
 }
 
 const NAV: { section: string; items: NavItem[] }[] = [
@@ -33,6 +37,7 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: 'Deals', href: '/deals', icon: Handshake },
       { label: 'Degum', href: '/degum', icon: Ship },
       { label: 'Trading Desk', href: '/trading', icon: TrendingUp },
+      { label: 'Mail', href: '/mail', icon: Inbox, perm: 'mail:read' },
     ],
   },
   {
@@ -63,6 +68,7 @@ function Brand() {
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const can = useAuth((s) => s.can);
   return (
     <nav className="flex-1 overflow-y-auto px-3 py-4">
       {NAV.map((group) => (
@@ -71,7 +77,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             {group.section}
           </p>
           <ul className="space-y-0.5">
-            {group.items.map((item) => {
+            {group.items.filter((item) => !item.perm || can(item.perm)).map((item) => {
               const active =
                 pathname === item.href ||
                 (item.href !== '/dashboard' &&

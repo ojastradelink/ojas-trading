@@ -23,7 +23,8 @@ const RESOURCES = [
   'dashboard', 'party', 'product', 'deal', 'degum', 'audit', 'user', 'settings',
 ];
 const ACTIONS = ['read', 'create', 'update', 'delete'];
-const EXTRA = ['report:export', 'deal:email']; // deal:email — send contract notes to the parties
+// deal:email — send contract notes to the parties; mail:* — the firm's mailbox (Mail section)
+const EXTRA = ['report:export', 'deal:email', 'mail:read', 'mail:send'];
 
 function permissionKeys(): string[] {
   const k = new Set<string>();
@@ -32,21 +33,23 @@ function permissionKeys(): string[] {
   return [...k];
 }
 
+// The mailbox goes to exactly the roles that send contract notes, not to every reader.
+const isMail = (k: string) => k.startsWith('mail:');
 const ROLE_POLICY: Record<string, (k: string) => boolean> = {
   ADMIN: () => true,
-  MANAGEMENT: (k) => k.endsWith(':read') || k === 'report:export',
+  MANAGEMENT: (k) => (k.endsWith(':read') && !isMail(k)) || k === 'report:export',
   TRADER: (k) =>
     k.startsWith('dashboard') || k.startsWith('party') || k.startsWith('product') ||
-    k.startsWith('deal:') || k.startsWith('degum:'),
+    k.startsWith('deal:') || k.startsWith('degum:') || isMail(k),
   // Finance records duty / final payment; Operations tracks vessels — both fill in Degum details.
   FINANCE: (k) =>
     k.startsWith('dashboard') || k === 'report:export' ||
     k === 'party:read' || k === 'product:read' || k === 'deal:read' || k === 'degum:read' || k === 'degum:update' ||
-    k === 'deal:email',
+    k === 'deal:email' || isMail(k),
   OPERATIONS: (k) =>
     k.startsWith('dashboard') || k === 'deal:read' || k === 'party:read' || k === 'product:read' ||
-    k === 'degum:read' || k === 'degum:update' || k === 'deal:email',
-  VIEWER: (k) => k.endsWith(':read'),
+    k === 'degum:read' || k === 'degum:update' || k === 'deal:email' || isMail(k),
+  VIEWER: (k) => k.endsWith(':read') && !isMail(k),
 };
 const ROLES = [
   { key: 'ADMIN', name: 'Administrator', description: 'Full access' },

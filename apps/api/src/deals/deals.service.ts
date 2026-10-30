@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { buildPageMeta } from '../common/dto/pagination.dto';
 import { RequestUser } from '../common/types/request-user';
+import { FIRM_NAME } from '../mail/firm';
 import { MailService } from '../mail/mail.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -239,30 +240,36 @@ export class DealService {
   /**
    * Email the contract note to the parties. The PDF is rendered in the browser
    * from the (possibly edited) note, so what is sent is exactly what was previewed.
+   * With attachPdf=false only the details go out in the body (e.g. a vessel /
+   * chain arrival update), with the degum shipment details when there are any.
    */
   async emailContractNote(
     user: RequestUser, id: string, dto: EmailContractNoteDto,
     file: { buffer?: Buffer; mimetype?: string } | undefined, ctx: Ctx,
   ) {
     const deal = await this.get(user, id);
+    const attach = dto.attachPdf !== false;
     const pdf = file?.buffer;
-    if (!pdf?.length || pdf.subarray(0, 5).toString('latin1') !== '%PDF-') {
+    if (attach && (!pdf?.length || pdf.subarray(0, 5).toString('latin1') !== '%PDF-')) {
       throw new BadRequestException('Attach the contract note as a PDF.');
     }
     const company = await this.prisma.company.findUnique({ where: { id: user.companyId } });
-    const firm = company?.legalName || company?.name || 'Ojas Trading';
+    const shipment = await this.prisma.degumDetail.findUnique({ where: { dealId: id } });
     const product = deal.product?.name ?? deal.product?.code ?? '';
     const subject = dto.subject?.trim() || `Contract Note ${deal.dealNo}${product ? ` – ${product}` : ''}`;
     const cc = (dto.cc ?? []).filter((e) => !dto.to.includes(e));
+    const rows = [...contractNoteRows(deal, product), ...shipmentRows(shipment)];
 
     await this.mail.send({
       to: dto.to,
       cc,
       replyTo: company?.email,
       subject,
-      html: contractNoteMailHtml(deal, firm, product, dto.message),
-      text: contractNoteMailText(deal, firm, product, dto.message),
-      attachments: [{ filename: `Contract-Note-${deal.dealNo.replace(/[^\w.-]+/g, '-')}.pdf`, content: pdf, contentType: 'application/pdf' }],
+      html: contractNoteMailHtml(rows, attach, dto.message),
+      text: contractNoteMailText(rows, attach, dto.message),
+      attachments: attach
+        ? [{ filename: `Contract-Note-${deal.dealNo.replace(/[^\w.-]+/g, '-')}.pdf`, content: pdf!, contentType: 'application/pdf' }]
+        : undefined,
     });
 
     await this.audit.record({
@@ -271,11 +278,11 @@ export class DealService {
       action: 'EXPORT',
       entityType: 'Deal',
       entityId: id,
-      summary: `Emailed contract note ${deal.dealNo} to ${[...dto.to, ...cc].join(', ')}`,
-      diff: { to: dto.to, cc, subject },
+      summary: `Emailed contract note ${deal.dealNo}${attach ? '' : ' (no PDF)'} to ${[...dto.to, ...cc].join(', ')}`,
+      diff: { to: dto.to, cc, subject, attachPdf: attach },
       ...ctx,
     });
-    return { sent: true, to: dto.to, cc };
+    return { sent: true, to: dto.to, cc, attached: attach };
   }
 
   async remove(user: RequestUser, id: string, ctx: Ctx) {
@@ -437,23 +444,44 @@ function contractNoteRows(deal: MailDeal, product: string): [string, string][] {
   ];
 }
 
-function contractNoteMailHtml(deal: MailDeal, firm: string, product: string, message?: string): string {
-  const rows = contractNoteRows(deal, product)
+/** Degum shipment details, only those filled in. */
+function shipmentRows(s: Prisma.DegumDetailGetPayload<object> | null): [string, string][] {
+  if (!s) return [];
+  const rows: [string, string][] = [
+    ['Vessel', s.vesselName ?? ''],
+    ['Vessel ETA', ddmmyyyy(s.vesselEta)],
+    ['Clearance', ddmmyyyy(s.clearanceDate)],
+    ['Chain', s.chain ?? ''],
+    ['Tank / Terminal', [s.tank, s.terminal].map((v) => v?.trim()).filter(Boolean).join(' / ')],
+  ];
+  return rows.filter(([, v]) => v.trim());
+}
+
+const mailCopy = (attach: boolean) => attach
+  ? { intro: 'Please find attached the contract note for the following transaction.',
+      close: 'Kindly check the attached contract note and let us know of any discrepancy.' }
+  : { intro: 'Please find below the latest update for the following transaction.',
+      close: 'Kindly let us know of any discrepancy.' };
+
+function contractNoteMailHtml(rows: [string, string][], attach: boolean, message?: string): string {
+  const copy = mailCopy(attach);
+  const table = rows
     .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#2a4074;font-weight:600">${escHtml(k)}</td><td style="padding:4px 0">${escHtml(v)}</td></tr>`)
     .join('');
   const note = message?.trim()
     ? `<p style="white-space:pre-line">${escHtml(message.trim())}</p>`
-    : '<p>Dear Sir/Madam,</p><p>Please find attached the contract note for the following transaction.</p>';
+    : `<p>Dear Sir/Madam,</p><p>${copy.intro}</p>`;
   return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111">
 ${note}
-<table style="border-collapse:collapse;margin:12px 0">${rows}</table>
-<p>Kindly check the attached contract note and let us know of any discrepancy.</p>
-<p>Regards,<br><strong>${escHtml(firm)}</strong></p>
+<table style="border-collapse:collapse;margin:12px 0">${table}</table>
+<p>${copy.close}</p>
+<p>Regards,<br><strong>${escHtml(FIRM_NAME)}</strong></p>
 </div>`;
 }
 
-function contractNoteMailText(deal: MailDeal, firm: string, product: string, message?: string): string {
-  const intro = message?.trim() || 'Dear Sir/Madam,\n\nPlease find attached the contract note for the following transaction.';
-  const rows = contractNoteRows(deal, product).map(([k, v]) => `${k}: ${v}`).join('\n');
-  return [intro, rows, 'Kindly check the attached contract note and let us know of any discrepancy.', `Regards,\n${firm}`].join('\n\n') + '\n';
+function contractNoteMailText(rows: [string, string][], attach: boolean, message?: string): string {
+  const copy = mailCopy(attach);
+  const intro = message?.trim() || `Dear Sir/Madam,\n\n${copy.intro}`;
+  const table = rows.map(([k, v]) => `${k}: ${v}`).join('\n');
+  return [intro, table, copy.close, `Regards,\n${FIRM_NAME}`].join('\n\n') + '\n';
 }

@@ -140,6 +140,15 @@ export default function DealsPage() {
   function openEdit(row: any) { setEditing(row); setLabels({}); setForm(rowToForm(row)); setOpen(true); }
   function closeModal() { setOpen(false); setEditing(null); setForm({}); setLabels({}); save.reset(); }
 
+  // The Mail section links an email to its deal as /deals?search=<deal no>.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('search');
+    if (!q) return;
+    window.history.replaceState(null, '', window.location.pathname);
+    setSearch(q);
+    setPage(1);
+  }, []);
+
   // "Sell" from the Trading Desk lands here as /deals?sellFrom=<purchase id>: open a new
   // deal with our firm as seller and that purchase as the source.
   useEffect(() => {

@@ -11,6 +11,9 @@ export interface MailMessage {
   html: string;
   text?: string;
   attachments?: SendMailOptions['attachments'];
+  // Threading headers for a reply.
+  inReplyTo?: string;
+  references?: string[];
 }
 
 /**
@@ -62,6 +65,8 @@ export class MailService {
         html: msg.html,
         text: msg.text,
         attachments: msg.attachments,
+        inReplyTo: msg.inReplyTo,
+        references: msg.references?.length ? msg.references : undefined,
       });
     } catch (err: any) {
       this.logger.error(`SMTP send failed: ${err?.message ?? err}`);

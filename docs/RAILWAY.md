@@ -158,6 +158,11 @@ won't duplicate data.
 | `SEED_ADMIN_EMAIL`  | `admin@ojastrading.com`                  | First-deploy admin           |
 | `SEED_ADMIN_PASSWORD`| your choice                             | First-deploy admin password  |
 | `PORT`              | *(auto)*                                 | Injected by Railway          |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | `smtp.gmail.com` / `465` / `true` | Outgoing mail (contract notes, Mail replies) |
+| `SMTP_USER`         | `work.ojasoilstradelink@gmail.com`       | The firm's Gmail             |
+| `SMTP_PASS`         | Gmail App Password                       | Google Account → Security → App passwords |
+| `MAIL_FROM`         | `"Rajendra Kumar Arun Kumar Brokerage House (OJAS) <work.ojasoilstradelink@gmail.com>"` | Sender shown to recipients |
+| `IMAP_HOST` / `IMAP_PORT` / `IMAP_USER` / `IMAP_PASS` | *(optional)* | Mail section (Inbox + Sent). With a Gmail `SMTP_HOST` these default to `imap.gmail.com:993` + the SMTP user/App Password |
 
 **web**
 

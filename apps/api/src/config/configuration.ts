@@ -23,6 +23,14 @@ export interface AppConfig {
     user: string;
     pass: string;
     from: string;
+    // Incoming mail (the Mail section) — the same mailbox over IMAP.
+    imap: {
+      host: string;
+      port: number;
+      secure: boolean;
+      user: string;
+      pass: string;
+    };
   };
 }
 
@@ -53,5 +61,13 @@ export default (): AppConfig => ({
     user: process.env.SMTP_USER ?? '',
     pass: process.env.SMTP_PASS ?? '',
     from: process.env.MAIL_FROM ?? process.env.SMTP_USER ?? '',
+    // Blank IMAP_HOST = the Mail section is off, except a Gmail SMTP host implies imap.gmail.com.
+    imap: {
+      host: process.env.IMAP_HOST || (/(^|\.)gmail\.com$/i.test(process.env.SMTP_HOST ?? '') ? 'imap.gmail.com' : ''),
+      port: parseInt(process.env.IMAP_PORT || '993', 10),
+      secure: (process.env.IMAP_SECURE ?? 'true') === 'true',
+      user: process.env.IMAP_USER || process.env.SMTP_USER || '',
+      pass: process.env.IMAP_PASS || process.env.SMTP_PASS || '',
+    },
   },
 });

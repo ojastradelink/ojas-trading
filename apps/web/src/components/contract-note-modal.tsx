@@ -1,22 +1,17 @@
 'use client';
 
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { Download, FileText, Loader2, Mail, Send, X } from 'lucide-react';
 import Link from 'next/link';
-import { type KeyboardEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { EmailList } from '@/components/email-list';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { api, apiGet } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
 import { formatNumber } from '@/lib/format';
-
-interface Company {
-  name: string; legalName?: string | null; addressLine?: string | null;
-  city?: string | null; state?: string | null; pincode?: string | null;
-  phone?: string | null; email?: string | null; gstin?: string | null;
-}
 
 export type ContractNoteVariant = 'direct' | 'degum';
 
@@ -48,15 +43,18 @@ const GOLD = '#e2a900'; // the logo's oil-drop gold
 const PAGE_MARGIN_MM = 6;
 const PAGE_W = '210mm';
 const CONTENT_W = `${210 - 2 * PAGE_MARGIN_MM}mm`;
+// Printable height of a sheet, 1mm short so rounding never spills onto a blank page.
+const CONTENT_H = `${297 - 2 * PAGE_MARGIN_MM - 1}mm`;
 const INK = '#1a1f2b';
 const MUTED = '#5b6475';
 // Ojas + Rajendra Kumar Arun Kumar letterhead (apps/web/public). The print
 // iframe's srcdoc inherits the app's base URL, so the relative path resolves there too.
 const LOGO_URL = '/brand/contract-note-logo.png';
-// Letterhead contact line — fixed for the notes, independent of Settings › Company.
+// Letterhead firm + contact line — fixed for the notes, independent of Settings › Company.
+const FIRM_NAME = 'Rajendra Kumar Arun Kumar Brokerage House (OJAS)';
 const LETTERHEAD = {
   address: 'Dal Bazar, Lashkar, Gwalior - 474009',
-  email: 'work.ojastradelink@gmail.com',
+  email: 'work.ojasoilstradelink@gmail.com',
   phone: '07514076634',
   mobile: '9827024412, 9425781805',
 };
@@ -64,7 +62,7 @@ const LETTERHEAD = {
 // Page 2 of every note: the General Terms & Conditions.
 const GENERAL_TC_INTRO = 'This contract is subject to the applicable General Terms and Conditions for Oils & Fats and the by-laws of the Indian Vegetable Oil Processors Association (IVPA), Mumbai, where applicable and legally enforceable, and the provisions of the Indian Contract Act, 1872, as amended from time to time.';
 const GENERAL_TC: [string, string][] = [
-  ['Broker’s Capacity', 'Rajendra Kumar Arun Kumar Brokerage House (OJAS) (“Broker”) acts solely as an intermediary/agent between Buyer and Seller and is not a principal, guarantor or del credere agent. The Broker does not take title, possession or custody of the goods, or assume any risk relating to quality, quantity, payment, delivery, storage or transportation.'],
+  ['Broker’s Capacity', `${FIRM_NAME} (“Broker”) acts solely as an intermediary/agent between Buyer and Seller and is not a principal, guarantor or del credere agent. The Broker does not take title, possession or custody of the goods, or assume any risk relating to quality, quantity, payment, delivery, storage or transportation.`],
   ['Buyer and Seller’s Responsibility', 'Buyer and Seller shall be solely responsible for performance of their respective obligations, including quality, quantity, packing, loading, delivery, payment, title, statutory documents, taxes and regulatory compliance. The Broker shall not be liable for either party’s breach, default, delay, loss or failure to perform, except to the extent liability cannot lawfully be excluded.'],
   ['Bargain Confirmation', 'Every bargain confirmed through the Broker and accepted by Buyer and Seller through written communication, including email, WhatsApp or a contract note, shall bind the parties according to the confirmed terms. Any modification must be mutually agreed in writing.'],
   ['Quality and Quantity', 'Unless otherwise agreed in writing, the certificate/report of the mutually accepted surveyor at loading shall be the agreed basis for determining quality and quantity at loading. The Broker has no physical custody or control of the goods and is not responsible for sampling, testing, shortage, contamination or subsequent deterioration.'],
@@ -146,9 +144,12 @@ function withMs(name: string): string {
 function noteStyle(): string {
   return `
   /* On screen .on is a whole A4 sheet; its 6mm padding is the print/PDF page margin. */
-  .on { box-sizing: border-box; width: ${PAGE_W}; margin: 0 auto; padding: ${PAGE_MARGIN_MM}mm; background: #fff; color: ${INK};
-        font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; line-height: 1.4; }
+  .on { box-sizing: border-box; width: ${PAGE_W}; min-height: 297mm; margin: 0 auto; padding: ${PAGE_MARGIN_MM}mm; background: #fff; color: ${INK};
+        font-family: Arial, Helvetica, sans-serif; font-size: 12.5px; line-height: 1.4;
+        display: flex; flex-direction: column; }
   .on * { box-sizing: border-box; }
+  /* Signature, closing rule and page number sit at the foot of the sheet. */
+  .on-end { margin-top: auto; padding-top: 8px; }
   /* The logo's lettering is white, so it sits on a navy band, edged in the logo's gold. */
   .on-logo { background: ${BRAND}; border-bottom: 3px solid ${GOLD}; border-radius: 4px 4px 0 0;
              padding: 8px 16px; text-align: center; line-height: 0; }
@@ -203,7 +204,7 @@ function noteStyle(): string {
   @page { size: A4; margin: ${PAGE_MARGIN_MM}mm; }
   @media print {
     body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .on { width: auto; padding: 0; }
+    .on { width: auto; min-height: ${CONTENT_H}; padding: 0; }
   }
   `;
 }
@@ -290,15 +291,17 @@ function notePage1(d: NoteData, variant: ContractNoteVariant): string {
       ${kv('Brokerage', esc(d.brokerage || '—'))}
     </table>
     <div class="on-foot">This contract is subject to the Terms &amp; Conditions on page 2, which form part of it.</div>
-    <div class="on-sign">
-      <div class="box">
-        <div class="for">For ${esc(firm)}</div>
-        <div class="space"></div>
-        <div class="line">Authorised Signatory</div>
+    <div class="on-end">
+      <div class="on-sign">
+        <div class="box">
+          <div class="for">For ${esc(firm)}</div>
+          <div class="space"></div>
+          <div class="line">Authorised Signatory</div>
+        </div>
       </div>
+      <div class="on-bottom"><div></div></div>
+      <div class="on-pageno">Page 1 of 2</div>
     </div>
-    <div class="on-bottom"><div></div></div>
-    <div class="on-pageno">Page 1 of 2</div>
   </div>`;
 }
 
@@ -310,8 +313,10 @@ function notePage2(d: NoteData): string {
     <div class="on-tc-h">General Terms &amp; Conditions</div>
     <p class="on-tc-lead">${esc(GENERAL_TC_INTRO)}</p>
     ${termsTable(GENERAL_TC.map(([k, v]) => `<b>${esc(k)}:</b> ${esc(v)}`))}
-    <div class="on-bottom"><div></div></div>
-    <div class="on-pageno">Page 2 of 2</div>
+    <div class="on-end">
+      <div class="on-bottom"><div></div></div>
+      <div class="on-pageno">Page 2 of 2</div>
+    </div>
   </div>`;
 }
 
@@ -339,7 +344,7 @@ function printNote(d: NoteData, variant: ContractNoteVariant) {
 /** The note as an A4 PDF — same template as the preview and the print. */
 async function notePdf(d: NoteData, variant: ContractNoteVariant): Promise<Blob> {
   const html2pdf = (await import('html2pdf.js')).default; // browser-only; keep it out of SSR
-  const html = `<div><style>${noteStyle()} .on { width: ${CONTENT_W}; padding: 0; }</style>${noteBody(d, variant)}</div>`;
+  const html = `<div><style>${noteStyle()} .on { width: ${CONTENT_W}; min-height: ${CONTENT_H}; padding: 0; }</style>${noteBody(d, variant)}</div>`;
   // Tailwind's preflight `img { display: block }` skews html2canvas's font-baseline
   // probe (an <img> in the live document), drawing all text too low so it clips into
   // the table borders. Undo it just for the capture.
@@ -360,50 +365,6 @@ async function notePdf(d: NoteData, variant: ContractNoteVariant): Promise<Blob>
   } finally {
     fix.remove();
   }
-}
-
-const EMAIL_RE = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
-
-/** Address chips: Enter, comma or blur adds what was typed; × removes. */
-function EmailList({ label, value, onChange }: { label: string; value: string[]; onChange: (v: string[]) => void }) {
-  const [draft, setDraft] = useState('');
-  const [bad, setBad] = useState('');
-  const commit = () => {
-    const parts = draft.split(/[,;\s]+/).map((t) => t.trim().toLowerCase()).filter(Boolean);
-    if (!parts.length) return;
-    const invalid = parts.filter((t) => !EMAIL_RE.test(t));
-    onChange([...value, ...parts.filter((t) => EMAIL_RE.test(t) && !value.includes(t))]);
-    setDraft(invalid.join(', '));
-    setBad(invalid.length ? `Not a valid email: ${invalid.join(', ')}` : '');
-  };
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit(); }
-    if (e.key === 'Backspace' && !draft && value.length) onChange(value.slice(0, -1));
-  };
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
-      <div className="flex min-h-9 flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1">
-        {value.map((e) => (
-          <span key={e} className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs">
-            {e}
-            <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => onChange(value.filter((x) => x !== e))} aria-label={`Remove ${e}`}>
-              <X className="size-3" />
-            </button>
-          </span>
-        ))}
-        <input
-          className="min-w-[10rem] flex-1 bg-transparent py-1 text-sm outline-none"
-          value={draft}
-          placeholder={value.length ? '' : 'name@example.com'}
-          onChange={(e) => { setDraft(e.target.value); setBad(''); }}
-          onKeyDown={onKey}
-          onBlur={commit}
-        />
-      </div>
-      {bad && <p className="text-xs text-destructive">{bad}</p>}
-    </div>
-  );
 }
 
 /** Textareas grow with their content instead of scrolling inside the form. */
@@ -458,7 +419,7 @@ function NotePreview({ html }: { html: string }) {
   );
 }
 
-function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVariant): NoteData {
+function buildNote(deal: any, variant: ContractNoteVariant): NoteData {
   const d = deal ?? {};
   const g = d.degumDetail ?? {};
   const degum = variant === 'degum';
@@ -486,7 +447,7 @@ function buildNote(deal: any, c: Company | undefined, variant: ContractNoteVaria
     : g.paymentDueDays ? `${g.paymentDueDays} days from clearance` : '';
 
   return {
-    firmName: c?.legalName || c?.name || 'Ojas Trading',
+    firmName: FIRM_NAME,
     firmAddress: LETTERHEAD.address,
     firmEmail: LETTERHEAD.email,
     firmPhone: LETTERHEAD.phone,
@@ -531,13 +492,7 @@ export function ContractNoteModal({
   deal: any | null;
   variant?: ContractNoteVariant;
 }) {
-  const companyQ = useQuery({
-    queryKey: ['settings', 'company'],
-    queryFn: () => apiGet<Company>('/settings/company'),
-    enabled: open,
-  });
-
-  const initial = useMemo(() => buildNote(deal, companyQ.data, variant), [deal, companyQ.data, variant]);
+  const initial = useMemo(() => buildNote(deal, variant), [deal, variant]);
   const [data, setData] = useState<NoteData>(initial);
   useEffect(() => setData(initial), [initial]);
   const [page, setPage] = useState(0); // previewed page
@@ -552,11 +507,14 @@ export function ContractNoteModal({
   const [cc, setCc] = useState<string[]>([]);
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
+  // Off for a plain update mail (e.g. vessel / chain arrival) without re-sending the note.
+  const [attachPdf, setAttachPdf] = useState(true);
 
   const send = useMutation({
     mutationFn: async () => {
       const fd = new FormData();
-      fd.append('file', await notePdf(data, variant), `Contract-Note-${deal.dealNo}.pdf`);
+      if (attachPdf) fd.append('file', await notePdf(data, variant), `Contract-Note-${deal.dealNo}.pdf`);
+      fd.append('attachPdf', String(attachPdf));
       fd.append('to', to.join(','));
       if (cc.length) fd.append('cc', cc.join(','));
       if (subject.trim()) fd.append('subject', subject.trim());
@@ -565,7 +523,7 @@ export function ContractNoteModal({
       const res = await api.post(`/deals/${deal.id}/contract-note/email`, fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      return (res.data?.data ?? res.data) as { to: string[]; cc: string[] };
+      return (res.data?.data ?? res.data) as { to: string[]; cc: string[]; attached: boolean };
     },
   });
 
@@ -575,6 +533,7 @@ export function ContractNoteModal({
     setCc([]);
     setSubject(deal ? `Contract Note ${deal.dealNo}${deal.product?.name ? ` – ${deal.product.name}` : ''}` : '');
     setMessage('');
+    setAttachPdf(true);
     send.reset();
   }, [deal, sellerEmail, buyerEmail]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -697,7 +656,7 @@ export function ContractNoteModal({
             {emailOpen && (
               <div ref={emailRef} className="scroll-mt-5 space-y-3 rounded-md border border-primary/40 bg-muted/30 p-3">
                 <p className="flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground">
-                  <Mail className="size-4" /> Email the contract note (PDF attached)
+                  <Mail className="size-4" /> {attachPdf ? 'Email the contract note (PDF attached)' : 'Email an update (no PDF)'}
                 </p>
                 {(!sellerEmail || !buyerEmail) && (
                   <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -722,9 +681,23 @@ export function ContractNoteModal({
                     onChange={(e) => setMessage(e.target.value)}
                   />
                 </div>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-primary"
+                    checked={attachPdf}
+                    onChange={(e) => setAttachPdf(e.target.checked)}
+                  />
+                  <span>
+                    Attach contract note (PDF)
+                    <span className="block text-xs text-muted-foreground">
+                      Untick to send just the details in the email body — e.g. a vessel or chain arrival update.
+                    </span>
+                  </span>
+                </label>
                 {send.isSuccess && (
                   <p className="text-sm text-green-700 dark:text-green-400">
-                    Sent to {[...send.data.to, ...send.data.cc].join(', ')}.
+                    Sent {send.data.attached ? 'with' : 'without'} the PDF to {[...send.data.to, ...send.data.cc].join(', ')}.
                   </p>
                 )}
                 {send.isError && <p className="text-sm text-destructive">{sendError ?? 'Email could not be sent.'}</p>}

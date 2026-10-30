@@ -3,6 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsIn,
@@ -13,6 +14,7 @@ import {
   Min,
 } from 'class-validator';
 import { PaginationQueryDto } from '../../common/dto/pagination.dto';
+import { emailList } from '../../mail/email-list';
 
 /** Payment terms offered for a deal's due date (days after the trade date). */
 export const DUE_DAY_OPTIONS = [7, 10];
@@ -60,12 +62,6 @@ export class DealQueryDto extends PaginationQueryDto {
 }
 
 // ── Email a contract note (multipart: PDF in `file` + these fields) ─────────
-//   Address lists arrive from FormData as a comma-separated string (or repeated
-//   fields); both normalise to a trimmed, de-duplicated array.
-const emailList = ({ value }: { value: unknown }) => {
-  const raw = (Array.isArray(value) ? value : [value]).flatMap((v) => String(v ?? '').split(/[,;\s]+/));
-  return [...new Set(raw.map((v) => String(v).trim().toLowerCase()).filter(Boolean))];
-};
 
 export class EmailContractNoteDto {
   @ApiProperty({ type: [String] })
@@ -79,4 +75,8 @@ export class EmailContractNoteDto {
 
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) subject?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(5000) message?: string;
+
+  @ApiPropertyOptional({ description: 'false = send the details only, without the PDF (default true)' })
+  // Read the raw field: implicit conversion has already made the multipart string 'false' into true.
+  @IsOptional() @Transform(({ obj }) => obj.attachPdf !== false && obj.attachPdf !== 'false') @IsBoolean() attachPdf?: boolean;
 }
