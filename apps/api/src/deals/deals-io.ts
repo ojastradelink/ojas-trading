@@ -33,6 +33,7 @@ const d = (v: any): string => {
 // the material's brokerage, and the due date is Date + Due Days (service).
 export const SPEC_DEAL: DealColSpec[] = [
   { header: 'Deal ID', get: (r) => r.dealNo },
+  { header: 'Manual Contract Note No.', get: (r) => r.manualNoteNo ?? '', imp: { key: 'manualNoteNo', kind: 'string' } },
   { header: 'Date', get: (r) => d(r.date), imp: { key: 'date', kind: 'date' } },
   { header: 'Buyer', get: (r) => r.buyerParty?.name ?? '', imp: { key: 'buyerPartyId', kind: 'party', required: true } },
   { header: 'Seller', get: (r) => r.sellerParty?.name ?? '', imp: { key: 'sellerPartyId', kind: 'party', required: true } },

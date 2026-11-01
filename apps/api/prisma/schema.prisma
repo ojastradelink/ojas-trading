@@ -294,6 +294,7 @@ model Deal {
   companyId     String
   company       Company   @relation(fields: [companyId], references: [id])
   dealNo        String
+  manualNoteNo  String? // contract note no. typed by hand, printed alongside the auto dealNo
   date          DateTime  @default(now())
 
   buyerPartyId  String?

@@ -37,6 +37,7 @@ export const DEAL_ENDPOINT = '/deals';
 
 export const DEAL_COLUMNS: DealColumn[] = [
   { key: 'dealNo', label: 'Deal ID' },
+  { key: 'manualNoteNo', label: 'Manual Contract Note No.' },
   { key: 'date', label: 'Date', fmt: 'date' },
   { key: 'buyerParty.name', label: 'Buyer' },
   { key: 'sellerParty.name', label: 'Seller' },
@@ -57,6 +58,7 @@ export const DEAL_COLUMNS: DealColumn[] = [
 
 export const DEAL_FIELDS: DealField[] = [
   { key: 'date', label: 'Date', type: 'date' },
+  { key: 'manualNoteNo', label: 'Manual Contract Note No.', type: 'text', hint: 'Optional — printed on the contract note alongside the auto Deal ID' },
   { key: 'productId', label: 'Material', type: 'select', ref: 'products', required: true },
   { key: 'buyerPartyId', label: 'Buyer', type: 'select', ref: 'parties', required: true },
   { key: 'sellerPartyId', label: 'Seller', type: 'select', ref: 'parties', required: true },

@@ -20,7 +20,7 @@ export type ContractNoteVariant = 'direct' | 'degum';
 // degum, its shipment record) holds is pre-filled; all of it stays editable.
 interface NoteData {
   firmName: string; firmAddress: string; firmEmail: string; firmPhone: string; firmMobile: string;
-  noteNo: string; date: string;
+  noteNo: string; manualNoteNo: string; date: string;
   sellerName: string; sellerAddress: string;
   buyerName: string; buyerAddress: string;
   commodity: string; specification: string;
@@ -162,6 +162,7 @@ function noteStyle(): string {
   .on-titlebar .meta.r { text-align: right; }
   .on-titlebar .lbl { display: block; font-size: 9.5px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: ${MUTED}; }
   .on-titlebar .val { font-size: 13.5px; font-weight: 700; color: ${INK}; }
+  .on-titlebar .lbl.manual { margin-top: 3px; }
   .on-titlebar .title { flex: 1; text-align: center; color: ${BRAND}; font-size: 19px; font-weight: 700;
                         letter-spacing: 4px; text-transform: uppercase; }
   .on-intro { font-size: 11.5px; font-style: italic; color: ${MUTED}; margin: 0 0 6px; }
@@ -223,7 +224,10 @@ function termsTable(rows: string[]): string {
 function titleBar(d: NoteData, title: string, cls = ''): string {
   return `
     <div class="on-titlebar">
-      <div class="meta"><span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span></div>
+      <div class="meta">
+        <span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span>
+        ${d.manualNoteNo.trim() ? `<span class="lbl manual">Manual Note No.</span><span class="val">${esc(d.manualNoteNo.trim())}</span>` : ''}
+      </div>
       <div class="title ${cls}">${title}</div>
       <div class="meta r"><span class="lbl">Dated</span><span class="val">${esc(d.date || '—')}</span></div>
     </div>`;
@@ -453,6 +457,7 @@ function buildNote(deal: any, variant: ContractNoteVariant): NoteData {
     firmPhone: LETTERHEAD.phone,
     firmMobile: LETTERHEAD.mobile,
     noteNo: d.dealNo ?? '',
+    manualNoteNo: d.manualNoteNo ?? '',
     date: dmy(d.date),
     sellerName: withMs(d.sellerParty?.name ?? ''),
     sellerAddress: partyAddress(d.sellerParty),
@@ -597,6 +602,7 @@ export function ContractNoteModal({
 
             <div className="grid grid-cols-2 gap-3">
               {field('Contract Note No.', 'noteNo')}
+              {field('Manual Contract Note No.', 'manualNoteNo', 'Optional — printed below the auto no.')}
               {field('Date', 'date', 'dd.mm.yyyy')}
             </div>
 

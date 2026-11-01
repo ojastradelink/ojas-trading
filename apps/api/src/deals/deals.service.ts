@@ -66,6 +66,7 @@ export class DealService {
       const contains = { contains: q.search, mode: 'insensitive' as const };
       where.OR = [
         { dealNo: contains },
+        { manualNoteNo: contains },
         { port: contains },
         { paymentCondition: contains },
         { shipmentMonth: contains },
@@ -146,6 +147,7 @@ export class DealService {
         data: {
           companyId: user.companyId,
           dealNo,
+          manualNoteNo: dto.manualNoteNo?.trim() || null,
           date,
           sourceDealId,
           buyerPartyId: dto.buyerPartyId,
@@ -214,6 +216,7 @@ export class DealService {
       where: { id },
       data: {
         date: dto.date ? new Date(dto.date) : undefined,
+        manualNoteNo: dto.manualNoteNo === undefined ? undefined : dto.manualNoteNo?.trim() || null,
         buyerPartyId: dto.buyerPartyId ?? undefined,
         sellerPartyId: dto.sellerPartyId ?? undefined,
         productId: dto.productId ?? undefined,
@@ -365,6 +368,7 @@ export class DealService {
           data: {
             companyId: user.companyId,
             dealNo,
+            manualNoteNo: rec.manualNoteNo ? String(rec.manualNoteNo).trim() : null,
             date,
             buyerPartyId: rec.buyerPartyId,
             sellerPartyId: rec.sellerPartyId,
@@ -435,6 +439,7 @@ type MailDeal = Prisma.DealGetPayload<{ include: typeof INCLUDE }>;
 function contractNoteRows(deal: MailDeal, product: string): [string, string][] {
   return [
     ['Contract Note No.', deal.dealNo],
+    ...(deal.manualNoteNo ? [['Manual Contract Note No.', deal.manualNoteNo] as [string, string]] : []),
     ['Date', ddmmyyyy(deal.date)],
     ['Seller', deal.sellerParty?.name ?? ''],
     ['Buyer', deal.buyerParty?.name ?? ''],

@@ -24,6 +24,8 @@ export const DUE_DAY_OPTIONS = [7, 10];
 //   half of the material's brokerage each. The due date is derived from dueDays.
 export class CreateDealDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() date?: string;
+  @ApiPropertyOptional({ description: 'Contract note no. typed by hand, alongside the auto deal no.' })
+  @IsOptional() @IsString() @MaxLength(50) manualNoteNo?: string | null;
   @ApiProperty() @IsString() buyerPartyId!: string;
   @ApiProperty() @IsString() sellerPartyId!: string;
   @ApiProperty({ description: 'Material (product)' }) @IsString() productId!: string;
