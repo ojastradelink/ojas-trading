@@ -439,7 +439,7 @@ type MailDeal = Prisma.DealGetPayload<{ include: typeof INCLUDE }>;
 function contractNoteRows(deal: MailDeal, product: string): [string, string][] {
   return [
     ['Contract Note No.', deal.dealNo],
-    ...(deal.manualNoteNo ? [['Manual Contract Note No.', deal.manualNoteNo] as [string, string]] : []),
+    ...(deal.manualNoteNo ? [['Contract No.', deal.manualNoteNo] as [string, string]] : []),
     ['Date', ddmmyyyy(deal.date)],
     ['Seller', deal.sellerParty?.name ?? ''],
     ['Buyer', deal.buyerParty?.name ?? ''],

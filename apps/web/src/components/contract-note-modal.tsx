@@ -226,7 +226,7 @@ function titleBar(d: NoteData, title: string, cls = ''): string {
     <div class="on-titlebar">
       <div class="meta">
         <span class="lbl">Contract Note No.</span><span class="val">${esc(d.noteNo || '—')}</span>
-        ${d.manualNoteNo.trim() ? `<span class="lbl manual">Manual Note No.</span><span class="val">${esc(d.manualNoteNo.trim())}</span>` : ''}
+        ${d.manualNoteNo.trim() ? `<span class="lbl manual">Contract No.</span><span class="val">${esc(d.manualNoteNo.trim())}</span>` : ''}
       </div>
       <div class="title ${cls}">${title}</div>
       <div class="meta r"><span class="lbl">Dated</span><span class="val">${esc(d.date || '—')}</span></div>
@@ -602,7 +602,7 @@ export function ContractNoteModal({
 
             <div className="grid grid-cols-2 gap-3">
               {field('Contract Note No.', 'noteNo')}
-              {field('Manual Contract Note No.', 'manualNoteNo', 'Optional — printed below the auto no.')}
+              {field('Contract No.', 'manualNoteNo', 'Optional — printed below the Contract Note No.')}
               {field('Date', 'date', 'dd.mm.yyyy')}
             </div>
 
